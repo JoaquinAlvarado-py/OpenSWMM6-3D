@@ -1,0 +1,4 @@
+const CONFIG = {
+    MAPBOX_ACCESS_TOKEN: 'pk.eyJ1IjoiamFhbHZhcmEyIiwiYSI6ImNtcHE1ejN6cDBsYmIyd29uN2dlMGlnbnQifQ.vqO2GpSCLiVumJ5K5OpLEA',
+    GOOGLE_MAPS_API_KEY: 'AIzaSyD12ZGwQJRZkPW0nW-RNVgWbOvcP_XEZao'
+};
