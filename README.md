@@ -16,7 +16,7 @@ Under the hood, it leverages the powerful [openswmm.engine](https://github.com/H
 - **Drag & Drop Import:** Easily load SWMM `.inp` models and custom `GeoJSON` spatial layers.
 - **Dynamic Layer Styling:** Change the color and visibility of individual network layers and background base maps on the fly.
 - **Street View Integration:** Drop a pegman to view the exact real-world locations of your junctions, outfalls, and conduits via Google Street View.
-- **TO DO: Advanced Simulation Engine:** Full integration with the HydroCouple OpenSWMM engine for accurate and modern hydraulic simulation capabilities.
+- **Advanced Simulation Engine:** Full integration with the HydroCouple OpenSWMM engine for accurate and modern hydraulic simulation capabilities.
 
 ## Getting Started
 

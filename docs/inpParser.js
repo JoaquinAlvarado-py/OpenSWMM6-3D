@@ -26,6 +26,18 @@ class InpParser {
         return this.extractFeatures();
     }
 
+    serialize(sections = this.sections) {
+        let out = "";
+        for (const [sectionName, rows] of Object.entries(sections)) {
+            out += `[${sectionName}]\n`;
+            for (const row of rows) {
+                out += row.join(" ") + "\n";
+            }
+            out += "\n";
+        }
+        return out;
+    }
+
     extractFeatures() {
         const features = {
             nodes: {},      // Store node data to lookup coordinates
@@ -146,7 +158,8 @@ class InpParser {
             nodes: nodesGeoJSON,
             links: linksGeoJSON,
             subcatchments: subcatchmentsGeoJSON,
-            counts: counts
+            counts: counts,
+            rawSections: this.sections
         };
     }
 }

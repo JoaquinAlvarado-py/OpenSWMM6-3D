@@ -25,6 +25,140 @@ window.map = map;
 // Add Navigation Control (Zoom, Rotate)
 map.addControl(new mapboxgl.NavigationControl(), 'top-right');
 
+// Initialize Mapbox GL Draw
+const draw = new MapboxDraw({
+    displayControlsDefault: false,
+    defaultMode: 'simple_select'
+});
+map.addControl(draw, 'top-right');
+
+// Drawing Toolbar Logic
+let currentDrawType = null;
+const drawBtns = document.querySelectorAll('.draw-btn');
+drawBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+        const id = btn.id;
+        if (id === 'btn-draw-trash') {
+            draw.trash();
+            return;
+        }
+        
+        drawBtns.forEach(b => b.classList.remove('active'));
+        
+        if (id === 'btn-draw-subcatchment') {
+            currentDrawType = 'SUBCATCHMENTS';
+            draw.changeMode('draw_polygon');
+            btn.classList.add('active');
+        } else if (id === 'btn-draw-raingage') {
+            currentDrawType = 'RAINGAGES';
+            draw.changeMode('draw_point');
+            btn.classList.add('active');
+        } else if (id === 'btn-draw-junction') {
+            currentDrawType = 'JUNCTIONS';
+            draw.changeMode('draw_point');
+            btn.classList.add('active');
+        } else if (id === 'btn-draw-conduit') {
+            currentDrawType = 'CONDUITS';
+            draw.changeMode('draw_line_string');
+            btn.classList.add('active');
+        } else if (id === 'btn-draw-outfall') {
+            currentDrawType = 'OUTFALLS';
+            draw.changeMode('draw_point');
+            btn.classList.add('active');
+        }
+    });
+});
+
+map.on('draw.modechange', (e) => {
+    if (e.mode === 'simple_select' || e.mode === 'direct_select') {
+        drawBtns.forEach(b => b.classList.remove('active'));
+        currentDrawType = null;
+    }
+});
+
+// Mapbox Draw Events
+map.on('draw.selectionchange', (e) => {
+    if (e.features.length > 0) {
+        openPropertiesEditor(e.features[0], true);
+    } else {
+        closePropertiesEditor();
+    }
+});
+map.on('draw.create', (e) => {
+    console.log('Feature created:', e.features);
+    if (!window.swmmData) {
+        window.swmmData = {
+            title: "New Project",
+            options: { FLOW_UNITS: "CMS", INFILTRATION: "HORTON", ROUTING_MODEL: "KINWAVE" },
+            raingages: [], subcatchments: [], junctions: [], outfalls: [], conduits: [], coordinates: [], polygons: []
+        };
+    }
+    
+    e.features.forEach(f => {
+        let newId = generateNextId(currentDrawType || 'UNKNOWN');
+        f.id = newId;
+        f.properties = f.properties || {};
+        f.properties.id = newId;
+        f.properties.type = currentDrawType;
+        
+        if (currentDrawType === 'SUBCATCHMENTS') {
+            window.swmmData.subcatchments.push({
+                Name: newId, RainGage: "", Outlet: "", Area: 10, PercImperv: 25, Width: 100, PercSlope: 0.5, CurbLength: 0, SnowPack: ""
+            });
+            window.swmmData.polygons.push({
+                Subcatchment: newId, 
+                coords: f.geometry.coordinates[0].map(c => ({x: c[0], y: c[1]}))
+            });
+        } else if (currentDrawType === 'RAINGAGES') {
+            window.swmmData.raingages.push({
+                Name: newId, Format: "INTENSITY", Interval: "1:00", SCF: 1.0, Source: "TIMESERIES", SeriesName: ""
+            });
+            window.swmmData.coordinates.push({ Node: newId, x: f.geometry.coordinates[0], y: f.geometry.coordinates[1] });
+        } else if (currentDrawType === 'JUNCTIONS') {
+            window.swmmData.junctions.push({
+                Name: newId, Elevation: 100, MaxDepth: 0, InitDepth: 0, SurDepth: 0, Aponded: 0
+            });
+            window.swmmData.coordinates.push({ Node: newId, x: f.geometry.coordinates[0], y: f.geometry.coordinates[1] });
+        } else if (currentDrawType === 'OUTFALLS') {
+            window.swmmData.outfalls.push({
+                Name: newId, Elevation: 90, Type: "FREE", StageData: "", Gated: "NO", RouteTo: ""
+            });
+            window.swmmData.coordinates.push({ Node: newId, x: f.geometry.coordinates[0], y: f.geometry.coordinates[1] });
+        } else if (currentDrawType === 'CONDUITS') {
+            let coords = f.geometry.coordinates;
+            // Generate temporary nodes for the ends if needed, or prompt user. For now, empty InNode/OutNode.
+            window.swmmData.conduits.push({
+                Name: newId, InNode: "", OutNode: "", Length: 100, Roughness: 0.01, InOffset: 0, OutOffset: 0, InitFlow: 0, MaxFlow: 0
+            });
+        }
+    });
+    
+    // Refresh UI
+    updateUIFromData(window.swmmData);
+    if (typeof renderProjectBrowser === 'function') renderProjectBrowser();
+});
+
+function generateNextId(category) {
+    if (!window.swmmData) return 'NEW-1';
+    let prefix = 'N-';
+    let arr = [];
+    if (category === 'SUBCATCHMENTS') { prefix = 'S-'; arr = window.swmmData.subcatchments; }
+    if (category === 'JUNCTIONS') { prefix = 'J-'; arr = window.swmmData.junctions; }
+    if (category === 'CONDUITS') { prefix = 'C-'; arr = window.swmmData.conduits; }
+    if (category === 'RAINGAGES') { prefix = 'RG-'; arr = window.swmmData.raingages; }
+    if (category === 'OUTFALLS') { prefix = 'OUT-'; arr = window.swmmData.outfalls; }
+    
+    let nextNum = 1;
+    if (arr && arr.length > 0) {
+        nextNum = arr.length + 1;
+    }
+    return prefix + nextNum;
+}
+map.on('draw.delete', (e) => {
+    console.log('Feature deleted:', e.features);
+    closePropertiesEditor();
+});
+
 // DOM Elements
 const pitchVal = document.getElementById('val-pitch');
 const bearingVal = document.getElementById('val-bearing');
@@ -363,6 +497,8 @@ function processAndLoadGeoJSON(geojson, fitBounds = true, fileName = 'Imported L
         color: layerColor,
         visible: true
     };
+    window.userLayerIds = window.userLayerIds || [];
+    window.userLayerIds.unshift(layerId);
 
     // Add source
     map.addSource(layerId, { type: 'geojson', data: geojson });
@@ -402,13 +538,13 @@ function processAndLoadGeoJSON(geojson, fitBounds = true, fileName = 'Imported L
     // Polygons
     map.addLayer({
         'id': layerId + '-polygons',
-        'type': 'fill',
+        'type': 'fill-extrusion',
         'source': layerId,
         'filter': ['any', ['==', ['geometry-type'], 'Polygon'], ['==', ['geometry-type'], 'MultiPolygon']],
         'paint': {
-            'fill-color': layerColor,
-            'fill-opacity': 0.4,
-            'fill-outline-color': layerColor
+            'fill-extrusion-color': layerColor,
+            'fill-extrusion-height': 0,
+            'fill-extrusion-opacity': 0.4
         }
     });
     setupInteraction(layerId + '-polygons', layerId);
@@ -429,14 +565,33 @@ function addLayerToControl(layerId, name, color) {
     const validHex = /^#[0-9A-F]{6}$/i.test(color) ? color : '#666666';
 
     label.innerHTML = `
-        <input type="checkbox" class="leaflet-control-layers-selector" checked>
-        <input type="color" class="layer-color-picker" value="${validHex}" style="width: 20px; height: 20px; padding: 0; border: none; border-radius: 3px; cursor: pointer; margin-right: 8px; background: none; flex-shrink: 0;" title="Change Layer Color">
-        <span>${name}</span>
+        <div style="display:flex; align-items:center; width:100%; justify-content:space-between; gap: 8px;">
+            <div style="display:flex; align-items:center;">
+                <input type="checkbox" class="leaflet-control-layers-selector" checked>
+                <input type="color" class="layer-color-picker" value="${validHex}" style="width: 20px; height: 20px; padding: 0; border: none; border-radius: 3px; cursor: pointer; margin-right: 8px; background: none; flex-shrink: 0;" title="Change Layer Color">
+                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100px;" title="${name}">${name}</span>
+            </div>
+            <div class="layer-controls-actions" style="display:flex; align-items:center; gap:4px;">
+                <button type="button" class="layer-height-toggle" title="Toggle 3D Height">3D</button>
+                <input type="range" class="layer-opacity-slider" min="0" max="100" value="100" style="width: 40px;" title="Opacity">
+                <div style="display:flex; flex-direction:column; gap:2px;">
+                    <button type="button" class="btn-layer-up" style="background:none;border:none;color:white;cursor:pointer;padding:0;line-height:0.8;font-size:10px;" title="Move Up">▲</button>
+                    <button type="button" class="btn-layer-down" style="background:none;border:none;color:white;cursor:pointer;padding:0;line-height:0.8;font-size:10px;" title="Move Down">▼</button>
+                </div>
+            </div>
+        </div>
     `;
     label.style.display = 'flex';
     label.style.alignItems = 'center';
+    label.style.width = '100%';
+    label.dataset.layerId = layerId;
     
-    container.appendChild(label);
+    const firstUserLayer = container.children[2];
+    if (firstUserLayer) {
+        container.insertBefore(label, firstUserLayer);
+    } else {
+        container.appendChild(label);
+    }
 
     const checkbox = label.querySelector('input[type="checkbox"]');
     checkbox.addEventListener('change', (e) => {
@@ -455,10 +610,35 @@ function addLayerToControl(layerId, name, color) {
         if (map.getLayer(layerId + '-points')) map.setPaintProperty(layerId + '-points', 'circle-color', newColor);
         if (map.getLayer(layerId + '-lines')) map.setPaintProperty(layerId + '-lines', 'line-color', newColor);
         if (map.getLayer(layerId + '-polygons')) {
-            map.setPaintProperty(layerId + '-polygons', 'fill-color', newColor);
-            map.setPaintProperty(layerId + '-polygons', 'fill-outline-color', newColor);
+            map.setPaintProperty(layerId + '-polygons', 'fill-extrusion-color', newColor);
         }
     });
+
+    const opacitySlider = label.querySelector('.layer-opacity-slider');
+    opacitySlider.addEventListener('input', (e) => {
+        const opacity = parseInt(e.target.value) / 100;
+        if (map.getLayer(layerId + '-points')) map.setPaintProperty(layerId + '-points', 'circle-opacity', opacity);
+        if (map.getLayer(layerId + '-lines')) map.setPaintProperty(layerId + '-lines', 'line-opacity', opacity);
+        if (map.getLayer(layerId + '-polygons')) map.setPaintProperty(layerId + '-polygons', 'fill-extrusion-opacity', opacity * 0.4);
+    });
+
+    const heightToggle = label.querySelector('.layer-height-toggle');
+    heightToggle.addEventListener('click', (e) => {
+        e.target.classList.toggle('active');
+        const is3D = e.target.classList.contains('active');
+        if (map.getLayer(layerId + '-polygons')) {
+            if (is3D) {
+                map.setPaintProperty(layerId + '-polygons', 'fill-extrusion-height', ['coalesce', ['get', 'height'], ['get', 'elevation'], 15]);
+            } else {
+                map.setPaintProperty(layerId + '-polygons', 'fill-extrusion-height', 0);
+            }
+        }
+    });
+
+    const btnUp = label.querySelector('.btn-layer-up');
+    const btnDown = label.querySelector('.btn-layer-down');
+    btnUp.addEventListener('click', () => moveLayerUi(layerId, -1, label));
+    btnDown.addEventListener('click', () => moveLayerUi(layerId, 1, label));
 }
 
 // Fit camera view to bounding box of GeoJSON
@@ -541,6 +721,7 @@ function setupInteraction(layerId, sourceId) {
         );
 
         showAttributes(feature, e.lngLat);
+        openPropertiesEditor(feature, false, sourceId);
     });
 
     // Hover effect
@@ -760,11 +941,76 @@ const btnSwmmOptions = document.getElementById('btn-swmm-options');
 const swmmOptionsPanel = document.getElementById('swmm-options-panel');
 const btnCloseOptions = document.getElementById('btn-close-options');
 
+const OPTIONS_MAPPING = {
+    'END_DATE': 'opt-end-date',
+    'END_TIME': 'opt-end-time',
+    'REPORT_START_DATE': 'opt-report-start-date',
+    'REPORT_START_TIME': 'opt-report-start-time',
+    'SWEEP_START': 'opt-sweep-start',
+    'SWEEP_END': 'opt-sweep-end',
+    'DRY_DAYS': 'opt-dry-days',
+    'REPORT_STEP': 'opt-report-step',
+    'DRY_STEP': 'opt-dry-step',
+    'WET_STEP': 'opt-wet-step',
+    'CONTROL_STEP': 'opt-control-step',
+    'ROUTING_STEP': 'opt-routing-step',
+    'SKIP_STEADY_STATE': 'opt-skip-steady-state',
+    'SYS_FLOW_TOL': 'opt-sys-flow-tol',
+    'LAT_FLOW_TOL': 'opt-lat-flow-tol'
+};
+
+function populateOptionsPanel() {
+    if (!window.swmmData || !window.swmmData['OPTIONS']) return;
+    const options = window.swmmData['OPTIONS'];
+    options.forEach(row => {
+        if (row.length >= 2) {
+            const key = row[0].toUpperCase();
+            const val = row[1];
+            if (OPTIONS_MAPPING[key]) {
+                const el = document.getElementById(OPTIONS_MAPPING[key]);
+                if (el) el.value = val;
+            }
+        }
+    });
+}
+
+function saveOptionsPanel() {
+    if (!window.swmmData) window.swmmData = {};
+    if (!window.swmmData['OPTIONS']) window.swmmData['OPTIONS'] = [];
+    
+    // Create a map of existing options
+    const optMap = {};
+    window.swmmData['OPTIONS'].forEach((row, index) => {
+        if(row.length > 0) optMap[row[0].toUpperCase()] = index;
+    });
+
+    for (const [key, id] of Object.entries(OPTIONS_MAPPING)) {
+        const el = document.getElementById(id);
+        if (el) {
+            if (optMap[key] !== undefined) {
+                window.swmmData['OPTIONS'][optMap[key]][1] = el.value;
+            } else {
+                window.swmmData['OPTIONS'].push([key, el.value]);
+            }
+        }
+    }
+}
+
+// Bind inputs to save on change
+Object.values(OPTIONS_MAPPING).forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+        el.addEventListener('change', saveOptionsPanel);
+    }
+});
+
 if (btnSwmmOptions && swmmOptionsPanel && btnCloseOptions) {
     btnSwmmOptions.addEventListener('click', () => {
+        populateOptionsPanel();
         swmmOptionsPanel.classList.add('active');
     });
     btnCloseOptions.addEventListener('click', () => {
+        saveOptionsPanel();
         swmmOptionsPanel.classList.remove('active');
     });
 }
@@ -773,33 +1019,32 @@ if (btnSwmmOptions && swmmOptionsPanel && btnCloseOptions) {
 const fpHeader = document.getElementById('swmm-options-header');
 if (fpHeader && swmmOptionsPanel) {
     let isDragging = false;
-    let startX, startY, initialX, initialY;
+    let startX, startY, initialLeft, initialTop;
 
     fpHeader.addEventListener('mousedown', (e) => {
+        if(e.target.closest('.fp-close') || e.target.closest('button') || e.target.closest('input')) return;
         isDragging = true;
         startX = e.clientX;
         startY = e.clientY;
         
-        // Get the current translation values
-        const style = window.getComputedStyle(swmmOptionsPanel);
-        // Fallback for browsers not supporting DOMMatrixReadOnly easily
-        let matrix;
-        try {
-            matrix = new DOMMatrixReadOnly(style.transform);
-            initialX = matrix.m41;
-            initialY = matrix.m42;
-        } catch(err) {
-            // fallback if transform is "none" or invalid
-            initialX = -200; // rough width / 2
-            initialY = -250; // rough height / 2
-        }
+        const rect = swmmOptionsPanel.getBoundingClientRect();
+        initialLeft = rect.left;
+        initialTop = rect.top;
+        
+        swmmOptionsPanel.style.transform = 'none';
+        swmmOptionsPanel.style.right = 'auto';
+        swmmOptionsPanel.style.bottom = 'auto';
+        swmmOptionsPanel.style.margin = '0';
+        swmmOptionsPanel.style.left = initialLeft + 'px';
+        swmmOptionsPanel.style.top = initialTop + 'px';
     });
 
     document.addEventListener('mousemove', (e) => {
         if (!isDragging) return;
         const dx = e.clientX - startX;
         const dy = e.clientY - startY;
-        swmmOptionsPanel.style.transform = `translate(${initialX + dx}px, ${initialY + dy}px)`;
+        swmmOptionsPanel.style.left = (initialLeft + dx) + 'px';
+        swmmOptionsPanel.style.top = (initialTop + dy) + 'px';
     });
 
     document.addEventListener('mouseup', () => {
@@ -928,6 +1173,15 @@ async function loadInpData(text, isUtm, epsgCode) {
     }
 
     const parsed = window.inpParser.parse(text);
+    
+    // Store all non-spatial data
+    window.swmmData = parsed.rawSections;
+    console.log("Loaded SWMM Data Hierarchy:", Object.keys(window.swmmData));
+    
+    // Attempt to render the tree view if it exists
+    if (typeof renderProjectBrowser === 'function') {
+        renderProjectBrowser();
+    }
 
     const transformCoord = (x, y) => {
         if (!isUtm) return [x, y];
@@ -1022,12 +1276,11 @@ async function loadInpData(text, isUtm, epsgCode) {
 // ============================================
 let swmmModule = null;
 if (typeof createModule !== 'undefined') {
-    createModule().then(Module => {
-        swmmModule = Module;
+    createModule().then(mod => {
+        swmmModule = mod;
         console.log('SWMM WASM Engine Loaded');
     });
 }
-
 const btnRunSimulation = document.getElementById('btn-run-simulation');
 if (btnRunSimulation) {
     btnRunSimulation.addEventListener('click', () => {
@@ -1042,6 +1295,12 @@ if (btnRunSimulation) {
 
         try {
             console.log("Preparing virtual file system...");
+            
+            // Re-serialize the SWMM data to string before running to capture any UI changes
+            if (window.inpParser && typeof window.inpParser.serialize === 'function' && window.swmmData) {
+                pendingInpText = window.inpParser.serialize(window.swmmData);
+            }
+            
             swmmModule.FS.writeFile('/in.inp', pendingInpText);
 
             console.log("Running SWMM simulation...");
@@ -1051,28 +1310,64 @@ if (btnRunSimulation) {
             // setTimeout ensures the UI updates to show "Running..." before blocking the main thread
             setTimeout(() => {
                 try {
-                    // Provide the command line arguments for the SWMM entry point
-                    swmmModule.arguments = ['/in.inp', '/rpt.rpt', '/out.out'];
-
-                    // Try run or callMain depending on what Emscripten exported
-                    if (swmmModule.run) {
-                        swmmModule.run();
-                        console.log("Simulation finished via swmmModule.run()");
-                    } else if (swmmModule.callMain) {
-                        swmmModule.callMain(['/in.inp', '/rpt.rpt', '/out.out']);
-                        console.log("Simulation finished via callMain.");
+                    // Execute simulation through our wrapper C function
+                    if (swmmModule._run_swmm_wasm) {
+                        console.log("Calling _run_swmm_wasm");
+                        let exitCode = swmmModule._run_swmm_wasm();
+                        console.log("Simulation finished with exit code:", exitCode);
                     } else {
-                        throw new Error("No entry point found in SWMM WebAssembly Module.");
+                        throw new Error("No entry point found in SWMM WebAssembly Module. Did _run_swmm_wasm export correctly?");
                     }
+
+                    console.log("Files in /:", swmmModule.FS.readdir('/'));
 
                     let rpt = "";
                     try {
                         rpt = swmmModule.FS.readFile('/rpt.rpt', { encoding: 'utf8' });
-                        alert("Simulation Complete! Check console for Report.");
-                        console.log(rpt);
+                        console.log("Report generated successfully.");
                     } catch(err) {
-                        console.warn("Could not read report file.");
-                        alert("Simulation failed or crashed. No report generated.");
+                        console.warn("Could not read /rpt.rpt. Trying rpt.rpt");
+                        try {
+                            rpt = swmmModule.FS.readFile('rpt.rpt', { encoding: 'utf8' });
+                        } catch (err2) {
+                            alert("Simulation failed or crashed. No report generated.");
+                            throw new Error("No report generated.");
+                        }
+                    }
+
+                    // Parse binary out.out
+                    let outBuf = null;
+                    try {
+                        let outArray = swmmModule.FS.readFile('/out.out', { encoding: 'binary' });
+                        outBuf = outArray.buffer.slice(outArray.byteOffset, outArray.byteOffset + outArray.byteLength);
+                    } catch (err) {
+                        console.warn("Could not read /out.out. Binary results not available.");
+                    }
+
+                    if (outBuf) {
+                        window.swmmResults = new window.SWMMOutParser(outBuf);
+                        if (window.swmmResults.parse()) {
+                            console.log("Successfully parsed binary results with", window.swmmResults.numPeriods, "time steps.");
+                            if (typeof initAnimationControls === 'function') initAnimationControls();
+                        } else {
+                            window.swmmResults = null;
+                        }
+                    }
+
+                    // Update UI with results
+                    const resultsContent = document.getElementById('results-content');
+                    const resultsModal = document.getElementById('results-modal');
+                    const btnViewResults = document.getElementById('btn-view-results');
+                    
+                    if (resultsContent && resultsModal) {
+                        resultsContent.textContent = rpt;
+                        resultsModal.style.display = 'flex';
+                    }
+                    
+                    if (btnViewResults) {
+                        btnViewResults.style.opacity = '1';
+                        btnViewResults.style.pointerEvents = 'auto';
+                        btnViewResults.textContent = "View Results";
                     }
 
                 } catch(e) {
@@ -1149,3 +1444,670 @@ function updateMapSources(parsed) {
         }, 'swmm-links-layer'); 
     }
 }
+
+// Reordering logic
+function moveLayerUi(layerId, direction, labelElement) {
+    const idx = window.userLayerIds.indexOf(layerId);
+    if (idx < 0) return;
+    
+    const targetIdx = idx + direction;
+    if (targetIdx < 0 || targetIdx >= window.userLayerIds.length) return;
+    
+    // Swap in array
+    const targetLayerId = window.userLayerIds[targetIdx];
+    window.userLayerIds[idx] = targetLayerId;
+    window.userLayerIds[targetIdx] = layerId;
+    
+    // Move in UI
+    const container = document.getElementById('overlay-layers-container');
+    if (direction === -1) {
+        // Move up (before the previous element)
+        container.insertBefore(labelElement, labelElement.previousElementSibling);
+    } else {
+        // Move down (after the next element)
+        container.insertBefore(labelElement.nextElementSibling, labelElement);
+    }
+    
+    // Move in Mapbox
+    // Higher in UI list means rendered on top, which means added AFTER in Mapbox.
+    // We can just iterate through userLayerIds in reverse and use map.moveLayer
+    // Because index 0 is top of UI, it should be drawn LAST.
+    // The layer at the end of userLayerIds should be drawn FIRST (bottom of UI).
+    for (let i = window.userLayerIds.length - 1; i >= 0; i--) {
+        const lId = window.userLayerIds[i];
+        if (map.getLayer(lId + '-polygons')) map.moveLayer(lId + '-polygons');
+        if (map.getLayer(lId + '-lines')) map.moveLayer(lId + '-lines');
+        if (map.getLayer(lId + '-points')) map.moveLayer(lId + '-points');
+    }
+}
+
+// Data Table Logic
+let tableCurrentPage = 1;
+const TABLE_PAGE_SIZE = 50;
+
+const btnDataTable = document.getElementById('btn-data-table');
+const dataTablePanel = document.getElementById('data-table-panel');
+const btnCloseDataTable = document.getElementById('btn-close-data-table');
+const layerSelect = document.getElementById('data-table-layer-select');
+const tableContainer = document.getElementById('data-table-container');
+const paginationContainer = document.getElementById('data-table-pagination');
+const btnSaveGeojson = document.getElementById('btn-save-geojson');
+
+if (btnDataTable && dataTablePanel) {
+    btnDataTable.addEventListener('click', () => {
+        dataTablePanel.classList.remove('hidden');
+        populateTableLayerSelect();
+    });
+    
+    btnCloseDataTable.addEventListener('click', () => {
+        dataTablePanel.classList.add('hidden');
+    });
+    
+    layerSelect.addEventListener('change', (e) => {
+        tableCurrentPage = 1;
+        renderDataTable(e.target.value, tableCurrentPage);
+    });
+
+    if (btnSaveGeojson) {
+        btnSaveGeojson.addEventListener('click', () => {
+            const layerId = layerSelect.value;
+            if (!layerId || !window.mapLayers[layerId]) return;
+            
+            const geojson = window.mapLayers[layerId].geojson;
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(geojson));
+            const dlAnchorElem = document.createElement('a');
+            dlAnchorElem.setAttribute("href", dataStr);
+            dlAnchorElem.setAttribute("download", window.mapLayers[layerId].name + "_modified.geojson");
+            dlAnchorElem.click();
+        });
+    }
+}
+
+function populateTableLayerSelect() {
+    layerSelect.innerHTML = '';
+    const layerIds = Object.keys(window.mapLayers);
+    if (layerIds.length === 0) {
+        layerSelect.innerHTML = '<option disabled selected>No layers imported</option>';
+        tableContainer.innerHTML = '<p style="color: #aaa; text-align: center; margin-top: 20px;">No data to display.</p>';
+        if (paginationContainer) paginationContainer.innerHTML = '';
+        return;
+    }
+    layerIds.forEach(id => {
+        const option = document.createElement('option');
+        option.value = id;
+        option.textContent = window.mapLayers[id].name;
+        layerSelect.appendChild(option);
+    });
+    tableCurrentPage = 1;
+    renderDataTable(layerSelect.value, tableCurrentPage);
+}
+
+function updatePaginationUI(totalItems, currentPage) {
+    if (!paginationContainer) return;
+    
+    const totalPages = Math.ceil(totalItems / TABLE_PAGE_SIZE);
+    
+    if (totalPages <= 1) {
+        paginationContainer.innerHTML = '';
+        return;
+    }
+    
+    paginationContainer.innerHTML = `
+        <button id="btn-page-prev" class="btn-secondary" style="padding: 4px 10px; font-size: 12px; width: auto;" ${currentPage === 1 ? 'disabled' : ''}>Prev</button>
+        <span style="color: white; font-size: 12px;">Page ${currentPage} of ${totalPages}</span>
+        <button id="btn-page-next" class="btn-secondary" style="padding: 4px 10px; font-size: 12px; width: auto;" ${currentPage === totalPages ? 'disabled' : ''}>Next</button>
+    `;
+    
+    const btnPrev = document.getElementById('btn-page-prev');
+    const btnNext = document.getElementById('btn-page-next');
+    
+    if (btnPrev) {
+        btnPrev.addEventListener('click', () => {
+            if (tableCurrentPage > 1) {
+                tableCurrentPage--;
+                renderDataTable(layerSelect.value, tableCurrentPage);
+            }
+        });
+    }
+    
+    if (btnNext) {
+        btnNext.addEventListener('click', () => {
+            if (tableCurrentPage < totalPages) {
+                tableCurrentPage++;
+                renderDataTable(layerSelect.value, tableCurrentPage);
+            }
+        });
+    }
+}
+
+function renderDataTable(layerId, page = 1) {
+    if (!layerId || !window.mapLayers[layerId]) {
+        tableContainer.innerHTML = '';
+        if (paginationContainer) paginationContainer.innerHTML = '';
+        return;
+    }
+    
+    const geojson = window.mapLayers[layerId].geojson;
+    const features = geojson.features;
+    if (!features || features.length === 0) {
+        tableContainer.innerHTML = '<p style="color: #aaa; text-align: center; margin-top: 20px;">No features found.</p>';
+        if (paginationContainer) paginationContainer.innerHTML = '';
+        return;
+    }
+    
+    updatePaginationUI(features.length, page);
+    
+    // Extract all unique property keys
+    const keys = new Set();
+    features.forEach(f => {
+        if (f.properties) {
+            Object.keys(f.properties).forEach(k => keys.add(k));
+        }
+    });
+    
+    const columns = Array.from(keys);
+    
+    let html = '<table><thead><tr>';
+    html += '<th>ID / Index</th>';
+    columns.forEach(col => {
+        html += `<th>${col}</th>`;
+    });
+    html += '</tr></thead><tbody>';
+    
+    const startIndex = (page - 1) * TABLE_PAGE_SIZE;
+    const endIndex = Math.min(startIndex + TABLE_PAGE_SIZE, features.length);
+    const paginatedFeatures = features.slice(startIndex, endIndex);
+    
+    paginatedFeatures.forEach((f, idxInPage) => {
+        const actualIdx = startIndex + idxInPage;
+        html += `<tr>`;
+        html += `<td>${f.id !== undefined ? f.id : actualIdx}</td>`;
+        columns.forEach(col => {
+            const val = f.properties && f.properties[col] !== undefined ? f.properties[col] : '';
+            html += `<td><input type="text" class="table-input" data-layer="${layerId}" data-feat-idx="${actualIdx}" data-prop="${col}" value="${val}"></td>`;
+        });
+        html += `</tr>`;
+    });
+    html += '</tbody></table>';
+    
+    tableContainer.innerHTML = html;
+    
+    // Attach change event listeners to inputs to modify GeoJSON and update Map
+    const inputs = tableContainer.querySelectorAll('.table-input');
+    inputs.forEach(input => {
+        input.addEventListener('change', (e) => {
+            const lId = e.target.getAttribute('data-layer');
+            const fIdx = parseInt(e.target.getAttribute('data-feat-idx'), 10);
+            const prop = e.target.getAttribute('data-prop');
+            const newVal = e.target.value;
+            
+            const feature = window.mapLayers[lId].geojson.features[fIdx];
+            if (!feature.properties) feature.properties = {};
+            
+            // Try parsing number if applicable
+            const parsedNum = parseFloat(newVal);
+            if (!isNaN(parsedNum) && parsedNum.toString() === newVal) {
+                feature.properties[prop] = parsedNum;
+            } else {
+                feature.properties[prop] = newVal;
+            }
+            
+            // Update source
+            if (map.getSource(lId)) {
+                map.getSource(lId).setData(window.mapLayers[lId].geojson);
+            }
+        });
+    });
+}
+
+// ==========================================
+// Results Modal UI Events
+// ==========================================
+const btnViewResults = document.getElementById('btn-view-results');
+const btnCloseResults = document.getElementById('btn-close-results');
+const resultsModal = document.getElementById('results-modal');
+
+if (btnViewResults && resultsModal) {
+    btnViewResults.addEventListener('click', () => {
+        resultsModal.style.display = 'flex';
+    });
+}
+
+if (btnCloseResults && resultsModal) {
+    btnCloseResults.addEventListener('click', () => {
+        resultsModal.style.display = 'none';
+    });
+}
+
+// ==========================================
+// Properties Editor
+// ==========================================
+const propertiesSidebar = document.getElementById('properties-sidebar');
+const propertiesContent = document.getElementById('properties-content');
+const btnCloseProperties = document.getElementById('btn-close-properties');
+
+let currentEditingFeature = null;
+let currentEditingIsDraw = false;
+let currentEditingLayerId = null; // For native map features
+
+if (btnCloseProperties) {
+    btnCloseProperties.addEventListener('click', closePropertiesEditor);
+}
+
+function closePropertiesEditor() {
+    propertiesSidebar.classList.add('hidden');
+    currentEditingFeature = null;
+    currentEditingIsDraw = false;
+    currentEditingLayerId = null;
+    
+    // Deselect from Mapbox Draw
+    if (typeof draw !== 'undefined' && draw) {
+        draw.changeMode('simple_select');
+    }
+}
+
+function openPropertiesEditor(feature, isDrawFeature, layerId = null) {
+    currentEditingFeature = feature;
+    currentEditingIsDraw = isDrawFeature;
+    currentEditingLayerId = layerId;
+    
+    propertiesSidebar.classList.remove('hidden');
+    
+    let html = '';
+    const props = feature.properties || {};
+    
+    // Auto-generate input fields for each property
+    Object.keys(props).forEach(key => {
+        html += `
+            <div class="prop-row">
+                <span class="prop-label">${key}</span>
+                <input type="text" class="prop-input" data-key="${key}" value="${props[key]}">
+            </div>
+        `;
+    });
+    
+    // If no properties exist, show a message and allow adding new ones
+    if (Object.keys(props).length === 0) {
+        html = '<p style="color: #aaa; font-size: 13px;">No properties defined for this element.</p>';
+    }
+    html += `
+        <div class="prop-row" style="margin-top: 16px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px;">
+            <span class="prop-label">New Property (e.g. Elevation)</span>
+            <input type="text" id="new-prop-key" class="prop-input" placeholder="Property Name" style="margin-bottom: 8px;">
+            <input type="text" id="new-prop-val" class="prop-input" placeholder="Value">
+            <button id="btn-add-prop" class="btn-primary" style="margin-top: 8px; width: 100%;">Add Property</button>
+        </div>
+    `;
+    
+    propertiesContent.innerHTML = html;
+    
+    // Wire up property change events
+    const inputs = propertiesContent.querySelectorAll('input.prop-input[data-key]');
+    inputs.forEach(input => {
+        input.addEventListener('change', (e) => {
+            const key = e.target.getAttribute('data-key');
+            let val = e.target.value;
+            
+            // Try parsing as number
+            const numVal = parseFloat(val);
+            if (!isNaN(numVal) && numVal.toString() === val) {
+                val = numVal;
+            }
+            
+            currentEditingFeature.properties[key] = val;
+            
+            // Update source
+            if (currentEditingIsDraw && typeof draw !== 'undefined') {
+                draw.add(currentEditingFeature);
+            } else if (currentEditingLayerId && window.mapLayers[currentEditingLayerId]) {
+                const geojson = window.mapLayers[currentEditingLayerId].geojson;
+                // Find and update the feature
+                const featIndex = geojson.features.findIndex(f => 
+                    (f.id === currentEditingFeature.id) || 
+                    (f.properties && f.properties.Name === currentEditingFeature.properties.Name)
+                );
+                
+                if (featIndex !== -1) {
+                    geojson.features[featIndex].properties[key] = val;
+                    if (map.getSource(currentEditingLayerId)) {
+                        map.getSource(currentEditingLayerId).setData(geojson);
+                    }
+                }
+            }
+        });
+    });
+    
+    const btnAddProp = document.getElementById('btn-add-prop');
+    if (btnAddProp) {
+        btnAddProp.addEventListener('click', () => {
+            const k = document.getElementById('new-prop-key').value.trim();
+            const v = document.getElementById('new-prop-val').value.trim();
+            if (k && v) {
+                if (!currentEditingFeature.properties) currentEditingFeature.properties = {};
+                currentEditingFeature.properties[k] = v;
+                
+                if (currentEditingIsDraw && typeof draw !== 'undefined') {
+                    draw.add(currentEditingFeature);
+                }
+                openPropertiesEditor(currentEditingFeature, currentEditingIsDraw, currentEditingLayerId);
+            }
+        });
+    }
+
+    // Attempt to show chart if results are available
+    if (window.swmmResults && window.swmmResults.parsed) {
+        let swmmType = null;
+        let swmmIndex = -1;
+        
+        if (props.type === 'SUBCATCHMENTS' || (props.id && props.Area !== undefined)) {
+            swmmType = 'SUBCATCHMENT';
+            swmmIndex = window.swmmResults.names.subcatchments.indexOf(props.id);
+        } else if (props.type === 'NODES' || props.type === 'JUNCTIONS' || props.type === 'OUTFALLS' || (props.id && props.InvertElev !== undefined)) {
+            swmmType = 'NODE';
+            swmmIndex = window.swmmResults.names.nodes.indexOf(props.id);
+        } else if (props.type === 'CONDUITS' || props.type === 'LINKS' || (props.id && props.Node1 !== undefined)) {
+            swmmType = 'LINK';
+            swmmIndex = window.swmmResults.names.links.indexOf(props.id);
+        }
+        
+        if (swmmType && swmmIndex >= 0) {
+            window.showPropertiesChart(swmmType, props.id, swmmIndex);
+        } else {
+            document.getElementById('properties-chart-container').style.display = 'none';
+        }
+    } else {
+        document.getElementById('properties-chart-container').style.display = 'none';
+    }
+}
+
+// ==========================================
+// Project Browser Tree View & Data Editor
+// ==========================================
+function renderProjectBrowser() {
+    const treeNodes = document.querySelectorAll('.tree-expandable');
+    treeNodes.forEach(node => {
+        // Prevent multiple listeners
+        node.replaceWith(node.cloneNode(true));
+    });
+    
+    document.querySelectorAll('.tree-expandable').forEach(node => {
+        node.addEventListener('click', (e) => {
+            if (e.target !== node && !node.contains(e.target)) return;
+            node.classList.toggle('expanded');
+            const branch = node.nextElementSibling;
+            if (branch && branch.classList.contains('tree-branch')) {
+                branch.classList.toggle('hidden');
+            }
+        });
+    });
+
+    const treeLeaves = document.querySelectorAll('.tree-leaf');
+    treeLeaves.forEach(leaf => {
+        leaf.replaceWith(leaf.cloneNode(true));
+    });
+    
+    document.querySelectorAll('.tree-leaf').forEach(leaf => {
+        leaf.addEventListener('click', (e) => {
+            const category = leaf.getAttribute('data-category');
+            if (category === 'OPTIONS') {
+                const optionsPanel = document.getElementById('swmm-options-panel');
+                if (optionsPanel) {
+                    populateOptionsPanel();
+                    optionsPanel.classList.add('active');
+                }
+
+            } else if (category) {
+                openDataEditor(category);
+            }
+        });
+    });
+}
+
+const dataEditorModal = document.getElementById('data-editor-modal');
+const btnCloseDataEditor = document.getElementById('btn-close-data-editor');
+const btnCancelDataEditor = document.getElementById('btn-data-editor-cancel');
+const btnSaveDataEditor = document.getElementById('btn-data-editor-save');
+const dataEditorBody = document.getElementById('data-editor-body');
+const dataEditorTitle = document.getElementById('data-editor-title');
+let currentEditorCategory = null;
+
+function renderDataEditorRows(lines) {
+    if (!lines || lines.length === 0) {
+        if (dataEditorBody) dataEditorBody.innerHTML = '<table class="data-table-grid"><tbody></tbody></table><p style="color: #8b949e; text-align: center; margin-top: 10px;" id="empty-editor-msg">No entries found. Click "+ Add Row" to create one.</p>';
+    } else {
+        let html = '<table class="data-table-grid"><tbody>';
+        lines.forEach((line, index) => {
+            const safeLine = line.replace(/"/g, '&quot;');
+            html += `<tr>
+                <td style="width: 40px; color: #8b949e; text-align: center;">${index + 1}</td>
+                <td><input type="text" value="${safeLine}" data-index="${index}" class="editor-row-input"></td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        if (dataEditorBody) dataEditorBody.innerHTML = html;
+    }
+}
+
+function openDataEditor(category) {
+    if (!window.swmmData) {
+        window.swmmData = {};
+    }
+    if (!window.swmmData[category]) {
+        window.swmmData[category] = [];
+    }
+    
+    currentEditorCategory = category;
+    if (dataEditorTitle) dataEditorTitle.innerText = `Data Editor: ${category}`;
+    
+    renderDataEditorRows(window.swmmData[category]);
+    
+    if (dataEditorModal) dataEditorModal.style.display = 'flex';
+}
+
+function closeDataEditor() {
+    if (dataEditorModal) dataEditorModal.style.display = 'none';
+    currentEditorCategory = null;
+}
+
+if (btnCloseDataEditor) btnCloseDataEditor.addEventListener('click', closeDataEditor);
+if (btnCancelDataEditor) btnCancelDataEditor.addEventListener('click', closeDataEditor);
+
+if (btnSaveDataEditor) {
+    btnSaveDataEditor.addEventListener('click', () => {
+        if (!currentEditorCategory || !window.swmmData || !window.swmmData[currentEditorCategory]) return;
+        
+        const inputs = dataEditorBody.querySelectorAll('.editor-row-input');
+        const newData = [];
+        inputs.forEach(input => {
+            const val = input.value.trim();
+            if (val) newData.push(val);
+        });
+        
+        window.swmmData[currentEditorCategory] = newData;
+        console.log(`Updated ${currentEditorCategory} with ${newData.length} lines.`);
+        closeDataEditor();
+        
+        // Reflect these changes to the pendingInpText if possible
+        if (window.inpParser && typeof window.inpParser.serialize === 'function') {
+            // we will need a serialize method. For now, it just saves in memory.
+            console.log("To fully serialize back, implement inpParser.serialize().");
+        }
+    });
+}
+
+const btnAddRowDataEditor = document.getElementById('btn-data-editor-add-row');
+if (btnAddRowDataEditor) {
+    btnAddRowDataEditor.addEventListener('click', () => {
+        if (!currentEditorCategory || !window.swmmData) return;
+        if (!window.swmmData[currentEditorCategory]) window.swmmData[currentEditorCategory] = [];
+        
+        // Grab existing inputs so we don't lose typed data
+        const inputs = dataEditorBody.querySelectorAll('.editor-row-input');
+        const newData = [];
+        inputs.forEach(input => {
+            newData.push(input.value);
+        });
+        
+        // Add one empty row
+        newData.push('');
+        window.swmmData[currentEditorCategory] = newData;
+        
+        // Re-render
+        renderDataEditorRows(newData);
+    });
+}
+
+// Initial binding
+renderProjectBrowser();
+
+
+// ==============================================
+// Animation & Chart Logic
+// ==============================================
+let animInterval = null;
+let animStep = 0;
+let isPlaying = false;
+let propertiesChart = null;
+let currentChartType = null;
+let currentChartId = null;
+
+window.initAnimationControls = function() {
+    if (!window.swmmResults || !window.swmmResults.parsed) return;
+    
+    const toolbar = document.getElementById('animation-toolbar');
+    toolbar.classList.remove('hidden');
+    
+    const slider = document.getElementById('anim-slider');
+    slider.max = window.swmmResults.numPeriods - 1;
+    slider.value = 0;
+    
+    const playBtn = document.getElementById('btn-anim-play');
+    playBtn.innerHTML = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+    
+    const updateTimeLabel = () => {
+        const timeDays = window.swmmResults.results.times[animStep];
+        if (timeDays === undefined) return;
+        // SWMM time is decimal days since 12/30/1899
+        // Approximation for label (relative to day 1)
+        const days = Math.floor(timeDays);
+        const fraction = timeDays - days;
+        const hours = Math.floor(fraction * 24);
+        const mins = Math.floor((fraction * 24 - hours) * 60);
+        const secs = Math.floor(((fraction * 24 - hours) * 60 - mins) * 60);
+        document.getElementById('anim-time-label').innerText = `Day ${days} ${String(hours).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;
+    };
+    
+    const updateMapColors = () => {
+        // Here we could update Mapbox / Cesium features based on current step
+        // For example, conduit flow (varIndex = 0 for flow)
+        if (window.swmmResults.counts.links > 0 && map.getSource('conduits')) {
+            const flows = window.swmmResults.getStepData('LINK', animStep, 0); // 0 = flow
+            // Optional: apply these flows as line-color or line-width in mapbox
+            // Currently left as a hook for Cesium or advanced 2D Mapbox
+        }
+    };
+    
+    const stepAnimation = () => {
+        if (animStep < window.swmmResults.numPeriods - 1) {
+            animStep++;
+        } else {
+            animStep = 0;
+            togglePlay(); // stop at end
+        }
+        slider.value = animStep;
+        updateTimeLabel();
+        updateMapColors();
+    };
+    
+    const togglePlay = () => {
+        isPlaying = !isPlaying;
+        if (isPlaying) {
+            playBtn.innerHTML = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>'; // pause icon
+            if (animStep >= window.swmmResults.numPeriods - 1) animStep = 0;
+            animInterval = setInterval(stepAnimation, 100);
+        } else {
+            playBtn.innerHTML = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>'; // play icon
+            clearInterval(animInterval);
+        }
+    };
+    
+    playBtn.onclick = togglePlay;
+    slider.oninput = (e) => {
+        animStep = parseInt(e.target.value);
+        updateTimeLabel();
+        updateMapColors();
+    };
+    
+    updateTimeLabel();
+};
+
+window.showPropertiesChart = function(type, id, swmmIndex) {
+    if (!window.swmmResults || !window.swmmResults.parsed) return;
+    
+    currentChartType = type;
+    currentChartId = id;
+    
+    const container = document.getElementById('properties-chart-container');
+    container.style.display = 'block';
+    
+    const select = document.getElementById('chart-variable-select');
+    select.innerHTML = '';
+    
+    let varNames = [];
+    if (type === 'SUBCATCHMENT') {
+        varNames = ['Precipitation', 'SnowDepth', 'Evaporation', 'Infiltration', 'Runoff', 'GW Flow', 'GW Elev', 'Soil Moisture'];
+    } else if (type === 'NODE') {
+        varNames = ['Depth', 'Head', 'Volume', 'Lateral Inflow', 'Total Inflow', 'Flooding'];
+    } else if (type === 'LINK') {
+        varNames = ['Flow', 'Depth', 'Velocity', 'Volume', 'Capacity'];
+    }
+    
+    varNames.forEach((name, i) => {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.innerText = name;
+        select.appendChild(opt);
+    });
+    
+    select.onchange = () => updateChart(type, swmmIndex, parseInt(select.value));
+    updateChart(type, swmmIndex, 0);
+};
+
+function updateChart(type, swmmIndex, varIndex) {
+    const series = window.swmmResults.getTimeSeries(type, swmmIndex, varIndex);
+    const labels = Array.from({length: series.length}, (_, i) => i);
+    
+    const ctx = document.getElementById('properties-chart').getContext('2d');
+    if (propertiesChart) {
+        propertiesChart.destroy();
+    }
+    
+    propertiesChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: document.getElementById('chart-variable-select').options[varIndex].text,
+                data: Array.from(series),
+                borderColor: '#10b981',
+                borderWidth: 1,
+                pointRadius: 0,
+                fill: false,
+                tension: 0.1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: { display: false },
+                y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e', font: {size: 10} } }
+            },
+            plugins: {
+                legend: { display: false },
+                tooltip: { enabled: true }
+            }
+        }
+    });
+}
+
