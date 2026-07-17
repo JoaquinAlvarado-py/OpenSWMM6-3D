@@ -573,7 +573,7 @@
                 // Try callMain first since it's the standard Emscripten way now
                 if (typeof Module.callMain === 'function') {
                     console.log('Running via callMain');
-                    Module.callMain(['/in.inp', '/rpt.rpt', '']);
+                    Module.callMain(['/in.inp', '/rpt.rpt', '/out.out']);
                     ran = true;
                 } else {
                     // Safely check for ccall to avoid getter aborts in newer Emscripten
@@ -582,11 +582,11 @@
                     
                     if (hasCCall && typeof Module._swmm_run === 'function') {
                         console.log('Running via ccall(swmm_run)');
-                        Module.ccall('swmm_run', 'number', ['string', 'string', 'string'], ['/in.inp', '/rpt.rpt', '']);
+                        Module.ccall('swmm_run', 'number', ['string', 'string', 'string'], ['/in.inp', '/rpt.rpt', '/out.out']);
                         ran = true;
                     } else if (typeof Module.run === 'function') {
                         console.log('Running via run (fallback)');
-                        Module.run(['/in.inp', '/rpt.rpt', '']);
+                        Module.run(['/in.inp', '/rpt.rpt', '/out.out']);
                         ran = true;
                     }
                 }
@@ -607,9 +607,24 @@
                 throw new Error('Simulation produced no report file.');
             }
 
+            let outBuffer = null;
+            try {
+                outBuffer = Module.FS.readFile('/out.out');
+            } catch (err) {
+                console.warn('Simulation produced no binary .out file.');
+            }
+
+            if (outBuffer && window.SWMMOutParser) {
+                const outParser = new window.SWMMOutParser(outBuffer.buffer);
+                outParser.parse();
+                window.App.outData = outParser;
+            } else {
+                window.App.outData = null;
+            }
+
             window.App.lastRunReport = rpt;
             console.log(rpt);
-            window.displayResults(rpt);
+            window.displayResults(rpt, window.App.outData);
         } catch (err) {
             console.error('Simulation failed:', err);
             window.showResultsWarning('Simulation failed: ' + err.message);
