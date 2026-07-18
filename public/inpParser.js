@@ -137,9 +137,10 @@ class InpParser {
         (S['SYMBOLS'] || []).forEach(row => {
             if (row.length >= 3) symbols[row[0]] = [this.num(row[1]), this.num(row[2])];
         });
+        const defaultCoord = Object.values(coords)[0] || [0, 0];
         (S['RAINGAGES'] || []).forEach(row => {
-            const pos = symbols[row[0]];
-            if (!pos) return; // gage without map position — kept implicit
+            // Give raingages a default map position so they are not dropped if [SYMBOLS] is missing
+            const pos = symbols[row[0]] || [defaultCoord[0] + 50, defaultCoord[1] + 50]; 
             model.nodes.push({
                 id: row[0], type: 'RAINGAGE', lngLat: pos,
                 props: {
