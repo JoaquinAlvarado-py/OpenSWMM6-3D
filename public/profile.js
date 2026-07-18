@@ -169,8 +169,9 @@
         const geo = buildGeometry(step);
         if (!geo.segments.length) return;
 
-        const W     = canvasEl.width;
-        const H     = canvasEl.height;
+        const dpr   = window.devicePixelRatio || 1;
+        const W     = canvasEl.width / dpr;
+        const H     = canvasEl.height / dpr;
         const plotW = W - PAD.left - PAD.right;
         const plotH = H - PAD.top  - PAD.bottom;
 
