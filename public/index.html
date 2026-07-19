@@ -11,7 +11,7 @@
     <!-- Mapbox GL JS CSS -->
     <link href="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css" rel="stylesheet" />
     <!-- Local Stylesheet -->
-    <link rel="stylesheet" href="styles.css?v=2">
+    <link rel="stylesheet" href="styles.css?v=3">
     <!-- Warm the HTTP cache for the simulation engine binary (fetched by simWorker.js) -->
     <link rel="preload" href="swmm6wasm.wasm" as="fetch" type="application/wasm" crossorigin="anonymous">
 </head>
@@ -151,6 +151,7 @@
                 <div class="settings-group-row">
                     <button id="btn-toggle-labels" class="tb-pill toggled" title="Toggle map labels">Labels</button>
                     <button id="btn-toggle-3d" class="tb-pill" title="Toggle 3D terrain & buildings">3D View</button>
+                    <button id="btn-toggle-warnings" class="tb-pill toggled" title="Toggle map warnings">Warnings</button>
                 </div>
                 <div class="settings-group">
                     <span class="settings-label">Units</span>
@@ -218,10 +219,7 @@
             <div class="panel-tab-content" id="tab-results">
                 <div class="panel-body" id="results-body">
                     <p class="panel-empty" id="results-hint">Build a network with at least one outfall, then click ▶ Run to simulate.</p>
-                    <div class="stat-row"><span>Nodes:</span><span id="stat-nodes">0</span></div>
-                    <div class="stat-row"><span>Links:</span><span id="stat-links">0</span></div>
-                    <div class="stat-row"><span>Subcatchments:</span><span id="stat-subcatchments">0</span></div>
-                    <select id="results-category-select" class="hidden" style="width: 100%; margin: 12px 0; padding: 6px; border: 1px solid #cdd0d5; border-radius: 4px; font-size: 13px; background-color: #f7f9fc; color: #1e293b; outline: none;"></select>
+                    <select id="results-category-select" class="rv-select hidden"></select>
                     <div id="results-content"></div>
                 </div>
             </div>
@@ -241,17 +239,18 @@
             <button id="btn-collapse-results"></button>
         </div>
 
-        <!-- BOTTOM STATUS BAR -->
         <footer id="statusbar">
-            <div class="sb-left">
-                <span>Tool: <b id="sb-tool">select</b></span>
-                <span class="sb-sep">·</span>
-                <span>Nodes: <b id="sb-nodes">0</b></span>
-                <span class="sb-sep">·</span>
-                <span>Links: <b id="sb-links">0</b></span>
-                <span class="sb-sep">·</span>
-                <span id="sb-coords"></span>
-            </div>
+            <span>Tool: <b id="sb-tool">select</b></span>
+            <span class="sb-sep">·</span>
+            <span>Nodes: <b id="sb-nodes">0</b></span>
+            <span class="sb-sep">·</span>
+            <span>Links: <b id="sb-links">0</b></span>
+            <span class="sb-sep">·</span>
+            <span>Subcatch: <b id="sb-subcatchments">0</b></span>
+            <span class="sb-sep">·</span>
+            <span>Rain Gages: <b id="sb-gages">0</b></span>
+            <span class="sb-sep">·</span>
+            <span id="sb-coords"></span>
         </footer>
     </div>
 
@@ -378,7 +377,7 @@
     <script src="swmmOutParser.js?v=2"></script>
     <script src="street_view_overlay.js?v=2"></script>
     <script src="swmm6wasm.js?v=2"></script>
-    <script src="results.js?v=2"></script>
+    <script src="results.js?v=3"></script>
     <script src="importers.js?v=2"></script>
     <script src="app.js?v=2"></script>
     <script src="tools.js?v=2"></script>

@@ -49,6 +49,7 @@
         linksVisible: true,
         subcatchmentsVisible: true,
         is3D: false,
+        warningsVisible: true,
         selection: new Set(),      // selected element ids
         masterPlan: null,          // geojson reference overlay
         lastRunReport: null

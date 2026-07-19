@@ -440,32 +440,105 @@
     window.ResultStyling = ResultStyling;
 
     // ---------- Results panel rendering ----------
-    function el(html) {
-        const div = document.createElement('div');
-        div.innerHTML = html.trim();
-        return div.firstChild;
-    }
-
     function esc(s) {
         return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     }
 
-    function legendBlock(title, minV, maxV, unit) {
-        const stops = [0, 0.25, 0.5, 0.75, 1];
-        const rows = stops.map(t => {
-            const v = (minV + (maxV - minV) * t);
-            return `<div class="legend-row"><span class="legend-swatch" style="background:${rampColor(t)}"></span><span>${v.toFixed(2)} ${unit}</span></div>`;
-        }).join('');
-        return `<div class="results-block"><h4>${esc(title)}</h4>${rows}</div>`;
+    function fmtVal(v, d = 2) {
+        return isFinite(v) ? Number(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—';
     }
 
-    function tableBlock(title, headers, rows) {
-        const head = headers.map(h => `<th>${esc(h)}</th>`).join('');
-        const body = rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('');
-        return `<div class="results-block"><h4>${esc(title)}</h4><table class="results-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+    // The category <select> is moved inside #results-content while the
+    // dashboard is shown; park it back in #results-body before the container
+    // is wiped so the element (and its listeners) survive re-renders.
+    function parkCategorySelect() {
+        const select = document.getElementById('results-category-select');
+        const body = document.getElementById('results-body');
+        const container = document.getElementById('results-content');
+        if (select && body && container && container.contains(select)) {
+            body.insertBefore(select, container);
+        }
+        return select;
+    }
+
+    function flyToElement(id) {
+        let center = null;
+        const n = Net.getNode(id);
+        if (n) center = n.lngLat;
+        if (!center) {
+            const l = Net.getLink(id);
+            if (l) {
+                const a = Net.getNode(l.from), b = Net.getNode(l.to);
+                if (a && b) center = [(a.lngLat[0] + b.lngLat[0]) / 2, (a.lngLat[1] + b.lngLat[1]) / 2];
+            }
+        }
+        if (!center) {
+            const s = Net.getSubcatchment(id);
+            if (s && s.ring && s.ring.length) {
+                center = s.ring.reduce((acc, c) => [acc[0] + c[0] / s.ring.length, acc[1] + c[1] / s.ring.length], [0, 0]);
+            }
+        }
+        if (!center) return;
+        map.flyTo({ center, zoom: Math.max(map.getZoom(), 16.5), duration: 900 });
+        if (window.Tools && window.Tools.select) window.Tools.select(id);
+    }
+
+    // Sparklines render lazily — a canvas is only drawn when scrolled into view
+    let sparkObserver = null;
+    function resetSparkObserver() {
+        if (sparkObserver) sparkObserver.disconnect();
+        sparkObserver = new IntersectionObserver((entries) => {
+            entries.forEach(en => {
+                if (!en.isIntersecting) return;
+                sparkObserver.unobserve(en.target);
+                drawSparkline(en.target);
+            });
+        }, { rootMargin: '120px' });
+        return sparkObserver;
+    }
+
+    function drawSparkline(canvas) {
+        const values = canvas._values;
+        if (!values || values.length < 2) return;
+        const dpr = window.devicePixelRatio || 1;
+        const w = canvas.clientWidth || 64, h = canvas.clientHeight || 20;
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+        const ctx = canvas.getContext('2d');
+        ctx.scale(dpr, dpr);
+        let min = Infinity, max = -Infinity, maxIdx = 0;
+        for (let i = 0; i < values.length; i++) {
+            const v = values[i] || 0;
+            if (v < min) min = v;
+            if (v > max) { max = v; maxIdx = i; }
+        }
+        const span = max - min || 1;
+        const px = i => 1 + (i / (values.length - 1)) * (w - 2);
+        const py = v => h - 2 - (((v || 0) - min) / span) * (h - 4);
+        const color = canvas._color || '#0d7377';
+        ctx.beginPath();
+        for (let i = 0; i < values.length; i++) {
+            const x = px(i), y = py(values[i]);
+            i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        }
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        ctx.lineTo(px(values.length - 1), h);
+        ctx.lineTo(px(0), h);
+        ctx.closePath();
+        ctx.globalAlpha = 0.12;
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.beginPath();
+        ctx.arc(px(maxIdx), py(max), 1.8, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
     }
 
     window.showResultsWarning = function (msg) {
+        parkCategorySelect();
         const container = document.getElementById('results-content');
         container.innerHTML = `<div class="results-warning">${esc(msg)}</div>`;
         if (window.openResultsPanel) window.openResultsPanel();
@@ -473,12 +546,13 @@
 
     window.clearResults = function () {
         ResultStyling.clear();
+        if (sparkObserver) sparkObserver.disconnect();
+        const select = parkCategorySelect();
+        if (select) select.classList.add('hidden');
         const container = document.getElementById('results-content');
         if (container) container.innerHTML = '';
         const hint = document.getElementById('results-hint');
         if (hint) hint.classList.remove('hidden');
-        const select = document.getElementById('results-category-select');
-        if (select) select.classList.add('hidden');
         window.App.lastRunReport = null;
         window.App.outData = null;
     };
@@ -486,8 +560,8 @@
     window.displayResults = function (rpt, outData) {
         const container = document.getElementById('results-content');
         const hint = document.getElementById('results-hint');
-        const select = document.getElementById('results-category-select');
-        
+        const select = parkCategorySelect();
+
         if (hint) hint.classList.add('hidden');
         container.innerHTML = '';
 
@@ -586,10 +660,8 @@
         ResultStyling.active = true;
         ResultStyling.applyToMap();
         
-        // Populate dropdown
-        let hasAny = false;
+        // ---- category dropdown options ----
         const availableOptions = [];
-        
         if (Object.keys(summaryData['Subcatchment Runoff']).length > 0) availableOptions.push('Subcatchment Runoff');
         if (Object.keys(summaryData['Node Depth']).length > 0) availableOptions.push('Node Depth');
         if (summaryData['Node Inflow'].length > 0) availableOptions.push('Node Inflow');
@@ -598,115 +670,341 @@
         if (Object.keys(summaryData['Link Flow']).length > 0) availableOptions.push('Link Flow');
         if (summaryData['Flow Classification'].length > 0) availableOptions.push('Flow Classification');
         if (summaryData['Conduit Surcharge'].length > 0) availableOptions.push('Conduit Surcharge');
-        
-        if (availableOptions.length > 0 && select) {
-            select.innerHTML = '';
-            select.classList.remove('hidden');
-            availableOptions.forEach(opt => {
-                const el = document.createElement('option');
-                el.value = opt;
-                el.textContent = opt;
-                select.appendChild(el);
-            });
-            hasAny = true;
-        } else if (select) {
-            select.classList.add('hidden');
-        }
 
-        const renderCategory = () => {
-            container.innerHTML = '';
-            const cat = select ? select.value : 'Node Depth';
-            
-            if (errors.length) {
-                container.innerHTML += `<div class="results-warning">${errors.map(esc).join('\n')}</div>`;
-            }
-            
-            if (depthVals.length) {
-                container.innerHTML += legendBlock(`Node Max Water Depth (${depthUnit})`, dMin, dMax, depthUnit);
-            }
-            if (flowVals.length) {
-                container.innerHTML += legendBlock(`Link Peak Flow Rate (${flowUnit})`, fMin, fMax, flowUnit);
-            }
-
-            if (cat === 'Node Depth') {
-                const rows = Object.entries(summaryData['Node Depth'])
-                    .sort((a, b) => b[1].maxDepth - a[1].maxDepth).slice(0, 50)
-                    .map(([id, d]) => [id, d.type, d.avgDepth.toFixed(3), d.maxDepth.toFixed(3)]);
-                if (rows.length) container.innerHTML += tableBlock(
-                    `Node Water Depth Summary (${depthUnit})`,
-                    ['Node ID', 'Type', `Avg Depth (${depthUnit})`, `Max Depth (${depthUnit})`],
-                    rows
-                );
-            } else if (cat === 'Link Flow') {
-                const rows = Object.entries(summaryData['Link Flow'])
-                    .sort((a, b) => b[1].maxFlow - a[1].maxFlow).slice(0, 50)
-                    .map(([id, f]) => [id, f.type, f.maxFlow.toFixed(3)]);
-                if (rows.length) container.innerHTML += tableBlock(
-                    `Link Flow Rate Summary (${flowUnit})`,
-                    ['Link ID', 'Type', `Peak Flow Rate (${flowUnit})`],
-                    rows
-                );
-            } else if (cat === 'Node Inflow') {
-                const rows = summaryData['Node Inflow'].map(d => [d.id, d.type, d.maxLatInflow, d.maxTotalInflow, d.latInflowVol, d.totalInflowVol, d.flowBalError]);
-                if (rows.length) container.innerHTML += tableBlock(
-                    `Node Inflow Summary (${flowUnit})`,
-                    ['Node ID', 'Type', `Max Lat. Inflow (${flowUnit})`, `Max Total Inflow (${flowUnit})`, `Lat. Inflow Vol. (${volUnit})`, `Total Inflow Vol. (${volUnit})`, 'Flow Bal. Error (%)'],
-                    rows
-                );
-            } else if (cat === 'Node Flooding') {
-                const rows = summaryData['Node Flooding'].map(d => [d.id, d.hoursFlooded, d.maxRate, d.totalFloodVol || '—', d.maxPondedVol || '—']);
-                if (rows.length) container.innerHTML += tableBlock(
-                    `Node Flooding Summary (${flowUnit})`,
-                    ['Node ID', 'Hours Flooded (hr)', `Max Flooding Rate (${flowUnit})`, `Total Flood Vol. (${volUnit})`, `Max Ponded Vol. (${volUnit})`],
-                    rows
-                );
-            } else if (cat === 'Outfall Loading') {
-                const rows = summaryData['Outfall Loading'].map(d => [d.id, d.flowFreq, d.avgFlow, d.maxFlow, d.totalVolume]);
-                if (rows.length) container.innerHTML += tableBlock(
-                    `Outfall Loading Summary`,
-                    ['Outfall ID', 'Flow Freq. (%)', `Avg Flow Rate (${flowUnit})`, `Peak Flow Rate (${flowUnit})`, `Total Vol. (${volUnit})`],
-                    rows
-                );
-            } else if (cat === 'Conduit Surcharge') {
-                const rows = summaryData['Conduit Surcharge'].map(d => [d.id, d.bothEnds, d.upstream, d.dnstream, d.aboveNormal, d.capacityLimited]);
-                if (rows.length) container.innerHTML += tableBlock(
-                    `Conduit Surcharge Summary (hrs above full)`,
-                    ['Conduit ID', 'Both Ends (hr)', 'Upstream (hr)', 'Downstream (hr)', 'Above Normal (hr)', 'Capacity-Ltd. (hr)'],
-                    rows
-                );
-            } else if (cat === 'Subcatchment Runoff') {
-                const rows = summaryData['Subcatchment Runoff'].map(d => [d.id, d.totalPrecip, d.totalRunon, d.totalEvap, d.totalInfil, d.totalRunoff, d.peakRunoff, d.runoffCoeff]);
-                if (rows.length) container.innerHTML += tableBlock(
-                    `Subcatchment Runoff Summary`,
-                    ['Subcatchment ID', `Total Precip. (mm)`, `Runon (mm)`, `Evap. (mm)`, `Infiltr. (mm)`, `Total Runoff (mm)`, `Peak Runoff (${flowUnit})`, 'Runoff Coeff.'],
-                    rows
-                );
-            } else if (cat === 'Flow Classification') {
-                const rows = summaryData['Flow Classification'].map(d => [d.id, d.upDry, d.downDry, d.subCrit, d.supCrit, d.upCrit, d.downCrit, d.normLtd]);
-                if (rows.length) container.innerHTML += tableBlock(
-                    `Flow Classification Summary (fraction of time)`,
-                    ['Conduit ID', 'Up Dry', 'Dn Dry', 'Sub-Critical', 'Super-Critical', 'Up-Critical', 'Dn-Critical', 'Norm. Limited'],
-                    rows
-                );
-            }
-            
-            // ---- summary footer ----
-            let summary = 'Simulation complete.';
-            if (contErrors.length) {
-                summary += `\nContinuity errors: ${contErrors.map(v => v.toFixed(2) + '%').join(', ')}`;
-            }
-            if (!depthVals.length && !flowVals.length && !hasAny) {
-                summary += '\nNo summary tables found in the report — check the console for the full report text.';
-            }
-            summary += '\nFull report printed to browser console.';
-            container.innerHTML += `<div class="results-summary">${esc(summary)}</div>`;
-        };
-
+        const hasAny = availableOptions.length > 0;
         if (select) {
-            select.onchange = renderCategory;
+            select.innerHTML = '';
+            select.classList.toggle('hidden', !hasAny);
+            availableOptions.forEach(opt => {
+                const o = document.createElement('option');
+                o.value = opt;
+                o.textContent = opt;
+                select.appendChild(o);
+            });
+            // land on Node Depth (matches the map coloring) when present
+            if (availableOptions.includes('Node Depth')) select.value = 'Node Depth';
         }
 
-        renderCategory();
+        // ---- hero card: run status, continuity chips, engine messages ----
+        const worstCont = contErrors.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+        const hasErr = errors.some(e => /^ERROR/i.test(e));
+        const statusCls = hasErr ? 'bad' : (errors.length || worstCont >= 10) ? 'warn' : 'ok';
+        const statusTxt = hasErr ? 'Simulation finished with errors'
+            : (errors.length || worstCont >= 10) ? 'Simulation finished with warnings'
+            : 'Simulation complete';
+        const stepsTxt = (ts && ts.times && ts.times.length) ? ` · ${ts.times.length} steps` : '';
+        const CONT_LABELS = ['Runoff', 'Routing', 'Quality'];
+        const chips = contErrors.map((v, i) => {
+            const a = Math.abs(v);
+            const cls = a < 5 ? 'ok' : a < 10 ? 'warn' : 'bad';
+            const label = CONT_LABELS[i] || 'Continuity';
+            return `<span class="rv-chip ${cls}" title="${label} continuity error">${label} <b>${v.toFixed(2)}%</b></span>`;
+        }).join('');
+        const msgs = errors.length
+            ? `<details class="rv-details"><summary>${errors.length} engine message${errors.length > 1 ? 's' : ''}</summary><div class="rv-details-body">${errors.map(esc).join('<br>')}</div></details>`
+            : '';
+        let html = `
+            <div class="rv-hero">
+                <div class="rv-hero-top">
+                    <span class="rv-dot ${statusCls}"></span>
+                    <div>
+                        <div class="rv-hero-title">${statusTxt}</div>
+                        <div class="rv-hero-sub">${Object.keys(depths).length} nodes · ${Object.keys(flows).length} links${stepsTxt}</div>
+                    </div>
+                </div>
+                ${chips ? `<div class="rv-chips">${chips}</div>` : ''}
+                ${msgs}
+            </div>`;
+
+        // ---- KPI cards ----
+        let peakDepth = null, peakFlow = null;
+        Object.entries(depths).forEach(([id, d]) => { if (!peakDepth || d.maxDepth > peakDepth.v) peakDepth = { id, v: d.maxDepth }; });
+        Object.entries(flows).forEach(([id, f]) => { if (!peakFlow || f.maxFlow > peakFlow.v) peakFlow = { id, v: f.maxFlow }; });
+        const floodedCount = summaryData['Node Flooding'].length;
+        const surchargedCount = summaryData['Conduit Surcharge'].length;
+
+        const kpis = [];
+        if (peakDepth) kpis.push(`<div class="rv-kpi" data-target="${esc(peakDepth.id)}" title="Zoom to ${esc(peakDepth.id)}"><div class="rv-kpi-label">Peak depth</div><div class="rv-kpi-value">${fmtVal(peakDepth.v)}<small>${esc(depthUnit)}</small></div><div class="rv-kpi-sub">◎ ${esc(peakDepth.id)}</div></div>`);
+        if (peakFlow) kpis.push(`<div class="rv-kpi" data-target="${esc(peakFlow.id)}" title="Zoom to ${esc(peakFlow.id)}"><div class="rv-kpi-label">Peak flow</div><div class="rv-kpi-value">${fmtVal(peakFlow.v)}<small>${esc(flowUnit)}</small></div><div class="rv-kpi-sub">◎ ${esc(peakFlow.id)}</div></div>`);
+        kpis.push(`<div class="rv-kpi ${floodedCount ? 'alert' : 'calm'}"${floodedCount ? ' data-cat="Node Flooding"' : ''}><div class="rv-kpi-label">Flooded nodes</div><div class="rv-kpi-value">${floodedCount}</div><div class="rv-kpi-sub">${floodedCount ? 'view summary' : 'none flooded'}</div></div>`);
+        kpis.push(`<div class="rv-kpi ${surchargedCount ? 'alert' : 'calm'}"${surchargedCount ? ' data-cat="Conduit Surcharge"' : ''}><div class="rv-kpi-label">Surcharged</div><div class="rv-kpi-value">${surchargedCount}</div><div class="rv-kpi-sub">${surchargedCount ? 'view summary' : 'none surcharged'}</div></div>`);
+        html += `<div class="rv-kpis">${kpis.join('')}</div>`;
+
+        // ---- continuous color-ramp legends ----
+        const grad = `linear-gradient(90deg, ${RAMP.join(', ')})`;
+        const legendHtml = (title, unit, lo, hi) => `
+            <div class="rv-legend">
+                <div class="rv-legend-title"><span>${esc(title)}</span><span class="rv-legend-unit">${esc(unit)}</span></div>
+                <div class="rv-legend-bar" style="background:${grad}"></div>
+                <div class="rv-legend-scale"><span>${fmtVal(lo)}</span><span>${fmtVal((lo + hi) / 2)}</span><span>${fmtVal(hi)}</span></div>
+            </div>`;
+        if (depthVals.length) html += legendHtml('Node max water depth', depthUnit, dMin, dMax);
+        if (flowVals.length) html += legendHtml('Link peak flow rate', flowUnit, fMin, fMax);
+
+        container.innerHTML = html;
+
+        // ---- interactive data explorer ----
+        if (hasAny && select) {
+            const num3 = v => Number(v).toFixed(3);
+            const tsNodes = (ts && ts.nodes) || null;
+            const tsLinks = (ts && ts.links) || null;
+            const CATS = {
+                'Node Depth': {
+                    rows: Object.entries(depths).map(([id, d]) => ({ id, type: d.type, avg: d.avgDepth, max: d.maxDepth })),
+                    cols: [
+                        { label: 'Node', key: 'id' },
+                        { label: 'Type', key: 'type', dim: true },
+                        { label: `Avg (${depthUnit})`, key: 'avg', num: true, fmt: num3 },
+                        { label: `Max (${depthUnit})`, key: 'max', num: true, fmt: num3, bar: true }
+                    ],
+                    spark: tsNodes && (id => tsNodes[id] && tsNodes[id].depth)
+                },
+                'Link Flow': {
+                    rows: Object.entries(flows).map(([id, f]) => ({ id, type: f.type, max: f.maxFlow })),
+                    cols: [
+                        { label: 'Link', key: 'id' },
+                        { label: 'Type', key: 'type', dim: true },
+                        { label: `Peak flow (${flowUnit})`, key: 'max', num: true, fmt: num3, bar: true }
+                    ],
+                    spark: tsLinks && (id => tsLinks[id] && tsLinks[id].flow)
+                },
+                'Node Inflow': {
+                    rows: summaryData['Node Inflow'],
+                    cols: [
+                        { label: 'Node', key: 'id' },
+                        { label: 'Type', key: 'type', dim: true },
+                        { label: `Max lat. (${flowUnit})`, key: 'maxLatInflow', num: true },
+                        { label: `Max total (${flowUnit})`, key: 'maxTotalInflow', num: true, bar: true },
+                        { label: `Lat. vol (${volUnit})`, key: 'latInflowVol', num: true },
+                        { label: `Total vol (${volUnit})`, key: 'totalInflowVol', num: true },
+                        { label: 'Bal. err (%)', key: 'flowBalError', num: true }
+                    ],
+                    spark: tsNodes && (id => tsNodes[id] && tsNodes[id].inflow)
+                },
+                'Node Flooding': {
+                    rows: summaryData['Node Flooding'],
+                    cols: [
+                        { label: 'Node', key: 'id' },
+                        { label: 'Hours', key: 'hoursFlooded', num: true },
+                        { label: `Max rate (${flowUnit})`, key: 'maxRate', num: true, bar: true },
+                        { label: `Flood vol (${volUnit})`, key: 'totalFloodVol', num: true },
+                        { label: `Ponded (${volUnit})`, key: 'maxPondedVol', num: true }
+                    ],
+                    spark: tsNodes && (id => tsNodes[id] && tsNodes[id].flooding)
+                },
+                'Outfall Loading': {
+                    rows: summaryData['Outfall Loading'],
+                    cols: [
+                        { label: 'Outfall', key: 'id' },
+                        { label: 'Freq (%)', key: 'flowFreq', num: true },
+                        { label: `Avg (${flowUnit})`, key: 'avgFlow', num: true },
+                        { label: `Peak (${flowUnit})`, key: 'maxFlow', num: true, bar: true },
+                        { label: `Vol (${volUnit})`, key: 'totalVolume', num: true }
+                    ]
+                },
+                'Conduit Surcharge': {
+                    rows: summaryData['Conduit Surcharge'],
+                    cols: [
+                        { label: 'Conduit', key: 'id' },
+                        { label: 'Both ends (hr)', key: 'bothEnds', num: true, bar: true },
+                        { label: 'Upstream (hr)', key: 'upstream', num: true },
+                        { label: 'Dnstream (hr)', key: 'dnstream', num: true },
+                        { label: 'Above normal (hr)', key: 'aboveNormal', num: true },
+                        { label: 'Cap. limited (hr)', key: 'capacityLimited', num: true }
+                    ]
+                },
+                'Subcatchment Runoff': {
+                    rows: summaryData['Subcatchment Runoff'],
+                    cols: [
+                        { label: 'Subcatch', key: 'id' },
+                        { label: 'Precip (mm)', key: 'totalPrecip', num: true },
+                        { label: 'Runon (mm)', key: 'totalRunon', num: true },
+                        { label: 'Evap (mm)', key: 'totalEvap', num: true },
+                        { label: 'Infil (mm)', key: 'totalInfil', num: true },
+                        { label: 'Runoff (mm)', key: 'totalRunoff', num: true, bar: true },
+                        { label: `Peak (${flowUnit})`, key: 'peakRunoff', num: true },
+                        { label: 'Coeff', key: 'runoffCoeff', num: true }
+                    ]
+                },
+                'Flow Classification': {
+                    rows: summaryData['Flow Classification'],
+                    cols: [
+                        { label: 'Conduit', key: 'id' },
+                        { label: 'Up dry', key: 'upDry', num: true },
+                        { label: 'Dn dry', key: 'downDry', num: true },
+                        { label: 'Sub-crit', key: 'subCrit', num: true, bar: true },
+                        { label: 'Sup-crit', key: 'supCrit', num: true },
+                        { label: 'Up crit', key: 'upCrit', num: true },
+                        { label: 'Dn crit', key: 'downCrit', num: true },
+                        { label: 'Norm. ltd', key: 'normLtd', num: true }
+                    ]
+                }
+            };
+
+            const explorer = document.createElement('div');
+            explorer.className = 'rv-explorer';
+            explorer.innerHTML = `
+                <div class="rv-exp-head"></div>
+                <div class="rv-table-wrap"></div>
+                <div class="rv-exp-foot"><span class="rv-count"></span><button class="rv-showall hidden" type="button"></button></div>`;
+            const expHead = explorer.querySelector('.rv-exp-head');
+            expHead.appendChild(select);
+            select.classList.remove('hidden');
+            const search = document.createElement('input');
+            search.type = 'text';
+            search.className = 'rv-search';
+            search.placeholder = 'Filter ID…';
+            expHead.appendChild(search);
+            container.appendChild(explorer);
+
+            const LIMIT = 50;
+            const tstate = { sortKey: null, sortDir: -1, filter: '', showAll: false };
+            const wrap = explorer.querySelector('.rv-table-wrap');
+            const countEl = explorer.querySelector('.rv-count');
+            const btnAll = explorer.querySelector('.rv-showall');
+
+            const renderTable = () => {
+                const cfg = CATS[select.value];
+                if (!cfg || !cfg.rows.length) {
+                    wrap.innerHTML = '<div class="rv-empty">No data in this report section.</div>';
+                    countEl.textContent = '';
+                    btnAll.classList.add('hidden');
+                    return;
+                }
+                const cols = cfg.cols;
+                const hasSpark = !!cfg.spark;
+                const barCol = cols.find(c => c.bar);
+                const sortKey = tstate.sortKey || (barCol ? barCol.key : cols[cols.length - 1].key);
+
+                let rows = cfg.rows;
+                if (tstate.filter) rows = rows.filter(r => String(r.id).toLowerCase().includes(tstate.filter));
+                rows = rows.slice().sort((a, b) => {
+                    const av = a[sortKey], bv = b[sortKey];
+                    const an = parseFloat(av), bn = parseFloat(bv);
+                    const d = (!isNaN(an) && !isNaN(bn)) ? an - bn : String(av).localeCompare(String(bv));
+                    return d * tstate.sortDir;
+                });
+
+                let barMax = 0;
+                if (barCol) rows.forEach(r => { const v = Math.abs(parseFloat(r[barCol.key])); if (isFinite(v) && v > barMax) barMax = v; });
+
+                const total = rows.length;
+                const shown = tstate.showAll ? rows : rows.slice(0, LIMIT);
+
+                const ths = cols.map(c => {
+                    const active = c.key === sortKey;
+                    const arrow = active ? (tstate.sortDir < 0 ? ' ▾' : ' ▴') : '';
+                    return `<th class="${c.num ? 'num' : ''}${active ? ' sorted' : ''}" data-key="${esc(c.key)}">${esc(c.label)}${arrow}</th>`;
+                }).join('') + (hasSpark ? '<th class="rv-spark-th">Trend</th>' : '');
+
+                const trs = shown.map(r => {
+                    const tds = cols.map(c => {
+                        const raw = r[c.key];
+                        const disp = c.fmt ? c.fmt(raw) : String(raw);
+                        if (c.bar && barMax > 0) {
+                            const t = (Math.abs(parseFloat(raw)) || 0) / barMax;
+                            return `<td class="num rv-bar-cell"><span class="rv-bar" style="width:${(t * 100).toFixed(1)}%;background:${rampColor(t)}"></span><span class="rv-bar-val">${esc(disp)}</span></td>`;
+                        }
+                        return `<td class="${c.num ? 'num' : ''}${c.dim ? ' dim' : ''}">${esc(disp)}</td>`;
+                    }).join('');
+                    return `<tr data-id="${esc(r.id)}">${tds}${hasSpark ? '<td class="rv-spark-td"><canvas class="rv-spark"></canvas></td>' : ''}</tr>`;
+                }).join('');
+
+                wrap.innerHTML = `<table class="rv-table"><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
+
+                if (hasSpark) {
+                    const observer = resetSparkObserver();
+                    const bodyRows = wrap.querySelectorAll('tbody tr');
+                    shown.forEach((r, i) => {
+                        const canvas = bodyRows[i] && bodyRows[i].querySelector('canvas.rv-spark');
+                        if (!canvas) return;
+                        const values = cfg.spark(r.id);
+                        if (!values || values.length < 2) { canvas.remove(); return; }
+                        canvas._values = values;
+                        canvas._color = (barCol && barMax > 0) ? rampColor((Math.abs(parseFloat(r[barCol.key])) || 0) / barMax) : '#0d7377';
+                        observer.observe(canvas);
+                    });
+                }
+
+                countEl.textContent = `${shown.length} of ${total} rows`;
+                if (total > shown.length) {
+                    btnAll.textContent = `Show all ${total}`;
+                    btnAll.classList.remove('hidden');
+                } else {
+                    btnAll.classList.add('hidden');
+                }
+            };
+
+            wrap.addEventListener('click', (e) => {
+                const th = e.target.closest('th[data-key]');
+                if (th) {
+                    const key = th.dataset.key;
+                    const cfg = CATS[select.value];
+                    const barCol = cfg && cfg.cols.find(c => c.bar);
+                    const current = tstate.sortKey || (barCol ? barCol.key : null);
+                    if (key === current) {
+                        tstate.sortDir *= -1;
+                        tstate.sortKey = key;
+                    } else {
+                        const col = cfg && cfg.cols.find(c => c.key === key);
+                        tstate.sortKey = key;
+                        tstate.sortDir = col && col.num ? -1 : 1;
+                    }
+                    renderTable();
+                    return;
+                }
+                const tr = e.target.closest('tr[data-id]');
+                if (tr) flyToElement(tr.dataset.id);
+            });
+            wrap.addEventListener('mouseover', (e) => {
+                const tr = e.target.closest('tr[data-id]');
+                if (tr && !tr.contains(e.relatedTarget) && window.setElementState) window.setElementState(tr.dataset.id, { hovered: true });
+            });
+            wrap.addEventListener('mouseout', (e) => {
+                const tr = e.target.closest('tr[data-id]');
+                if (tr && !tr.contains(e.relatedTarget) && window.setElementState) window.setElementState(tr.dataset.id, { hovered: false });
+            });
+
+            let searchTimer = null;
+            search.addEventListener('input', () => {
+                clearTimeout(searchTimer);
+                searchTimer = setTimeout(() => {
+                    tstate.filter = search.value.trim().toLowerCase();
+                    tstate.showAll = false;
+                    renderTable();
+                }, 120);
+            });
+            btnAll.addEventListener('click', () => { tstate.showAll = true; renderTable(); });
+            select.onchange = () => {
+                tstate.sortKey = null;
+                tstate.sortDir = -1;
+                tstate.showAll = false;
+                renderTable();
+            };
+
+            renderTable();
+        }
+
+        // KPI interactions: zoom to the element, or jump to a report section
+        container.querySelectorAll('.rv-kpi[data-target]').forEach(k => {
+            k.addEventListener('click', () => flyToElement(k.dataset.target));
+        });
+        container.querySelectorAll('.rv-kpi[data-cat]').forEach(k => {
+            k.addEventListener('click', () => {
+                if (!select || !availableOptions.includes(k.dataset.cat)) return;
+                select.value = k.dataset.cat;
+                if (select.onchange) select.onchange();
+                const exp = container.querySelector('.rv-explorer');
+                if (exp) exp.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            });
+        });
+
+        const note = document.createElement('div');
+        note.className = 'rv-note';
+        note.textContent = hasAny
+            ? 'Click a row to zoom to the element · full report in the browser console.'
+            : 'No summary tables found in the report · full report in the browser console.';
+        container.appendChild(note);
 
         if (window.openResultsPanel) window.openResultsPanel();
     };

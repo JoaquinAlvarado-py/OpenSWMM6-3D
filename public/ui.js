@@ -325,6 +325,13 @@
         window.apply3D();
     });
 
+    const btnWarnings = document.getElementById('btn-toggle-warnings');
+    btnWarnings.addEventListener('click', () => {
+        App.warningsVisible = !App.warningsVisible;
+        btnWarnings.classList.toggle('toggled', App.warningsVisible);
+        document.body.classList.toggle('hide-warnings', !App.warningsVisible);
+    });
+
     // OSM place search (Nominatim)
     const searchInput = document.getElementById('osm-search-input');
     const searchResults = document.getElementById('osm-search-results');
@@ -679,9 +686,8 @@
     window.updateUICounts = function () {
         document.getElementById('sb-nodes').textContent = Net.nodeCount;
         document.getElementById('sb-links').textContent = Net.linkCount;
-        document.getElementById('stat-nodes').textContent = Net.nodeCount;
-        document.getElementById('stat-links').textContent = Net.linkCount;
-        document.getElementById('stat-subcatchments').textContent = Net.subcatchments.length;
+        document.getElementById('sb-subcatchments').textContent = Net.subcatchments.length;
+        document.getElementById('sb-gages').textContent = Net.nodes.filter(n => n.type === 'RAINGAGE').length;
         document.getElementById('btn-undo').disabled = !Net.canUndo;
         document.getElementById('btn-redo').disabled = !Net.canRedo;
 
