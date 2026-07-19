@@ -14,11 +14,11 @@
     'use strict';
 
     const NODE_TYPES = ['JUNCTION', 'OUTFALL', 'STORAGE', 'DIVIDER', 'RAINGAGE'];
-    const LINK_TYPES = ['CONDUIT', 'PUMP', 'WEIR', 'ORIFICE'];
+    const LINK_TYPES = ['CONDUIT', 'PUMP', 'WEIR', 'ORIFICE', 'OUTLET'];
 
     const ID_PREFIX = {
         JUNCTION: 'J', OUTFALL: 'O', STORAGE: 'ST', DIVIDER: 'D', RAINGAGE: 'RG',
-        CONDUIT: 'C', PUMP: 'P', WEIR: 'W', ORIFICE: 'OR', SUBCATCHMENT: 'S'
+        CONDUIT: 'C', PUMP: 'P', WEIR: 'W', ORIFICE: 'OR', OUTLET: 'OL', SUBCATCHMENT: 'S'
     };
 
     const HISTORY_LIMIT = 100;
@@ -28,7 +28,7 @@
         switch (type) {
             case 'JUNCTION': return { invertEl: 0, maxDepth: 2, initDepth: 0, surDepth: 0, aponded: 0 };
             case 'OUTFALL': return { invertEl: 0, outfallType: 'FREE', stageData: '', gated: 'NO' };
-            case 'STORAGE': return { invertEl: 0, maxDepth: 5, initDepth: 0, shape: 'FUNCTIONAL', coeff: 1000, exponent: 0, constant: 0 };
+            case 'STORAGE': return { invertEl: 0, maxDepth: 5, initDepth: 0, shape: 'FUNCTIONAL', curveName: '', coeff: 1000, exponent: 0, constant: 0 };
             case 'DIVIDER': return { invertEl: 0, divertedLink: '', dividerType: 'CUTOFF', param: 0, maxDepth: 2 };
             case 'RAINGAGE': return { format: 'INTENSITY', interval: '1:00', scf: 1.0, sourceType: 'TIMESERIES', sourceName: 'TS1' };
             default: return {};
@@ -41,6 +41,7 @@
             case 'PUMP': return { pumpCurve: '*', status: 'ON', startup: 0, shutoff: 0 };
             case 'WEIR': return { weirType: 'TRANSVERSE', crestHt: 0, qCoeff: 3.33, gated: 'NO', xShape: 'RECT_OPEN', geom1: 1.0, geom2: 1.0, geom3: 0, geom4: 0 };
             case 'ORIFICE': return { orificeType: 'SIDE', offset: 0, qCoeff: 0.65, gated: 'NO', xShape: 'CIRCULAR', geom1: 1.0, geom2: 0, geom3: 0, geom4: 0 };
+            case 'OUTLET': return { offset: 0, outletType: 'FUNCTIONAL/DEPTH', qCoeff: 10, qExpon: 0.5, curveName: '', gated: 'NO' };
             default: return {};
         }
     }

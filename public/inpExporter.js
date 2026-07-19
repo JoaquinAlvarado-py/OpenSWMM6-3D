@@ -5,24 +5,41 @@ class InpExporter {
     pad(v, w) { return String(v).padEnd(w); }
 
     generateInp(net) {
-        const units = net.units === 'US' ? 'CFS' : 'LPS';
         const opt = net.options || {};
+        // Keep the imported flow unit (CMS ≠ LPS: DWF baselines etc. scale
+        // with it) unless the UI unit system no longer matches it.
+        const impliedUS = ['CFS', 'GPM', 'MGD'].includes((opt.flowUnits || '').toUpperCase());
+        const units = opt.flowUnits && ((net.units === 'US') === impliedUS)
+            ? opt.flowUnits.toUpperCase()
+            : (net.units === 'US' ? 'CFS' : 'LPS');
         const L = [];
 
         // Determine REPORT_STEP dynamically based on first RAINGAGE interval, if available
         const gages = net.nodes.filter(n => n.type === 'RAINGAGE');
         const needDefaultGage = !gages.length && net.subcatchments.length > 0;
         
+        // Options precedence: value edited in the UI (structured opt.* field)
+        // → value imported with the model (opt.raw) → app default. Without the
+        // raw layer, imported models silently ran with different numerics
+        // (ALLOW_PONDING, FORCE_MAIN_EQUATION, MAX_TRIALS, HEAD_TOLERANCE, …).
+        const raw = opt.raw || {};
+        const rawOr = (key, dflt) => raw[key] !== undefined ? raw[key] : dflt;
+
+        // REPORT_STEP: an imported model's own value wins; the gage-interval
+        // heuristic only applies to networks drawn from scratch in the UI.
         let reportStep = opt.reportStep || '00:15:00';
-        if (gages.length > 0 && gages[0].props.interval) {
-            let parts = String(gages[0].props.interval).split(':');
-            if (parts.length === 2) {
-                reportStep = `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}:00`;
-            } else if (parts.length === 3) {
-                reportStep = `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}:${parts[2].padStart(2, '0')}`;
+        if (raw['REPORT_STEP'] === undefined) {
+            const gageInterval = gages.length > 0 && gages[0].props.interval;
+            if (gageInterval) {
+                let parts = String(gageInterval).split(':');
+                if (parts.length === 2) {
+                    reportStep = `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}:00`;
+                } else if (parts.length === 3) {
+                    reportStep = `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}:${parts[2].padStart(2, '0')}`;
+                }
+            } else if (needDefaultGage) {
+                reportStep = '01:00:00'; // Default RG1 has 1:00 interval
             }
-        } else if (needDefaultGage) {
-            reportStep = '01:00:00'; // Default RG1 has 1:00 interval
         }
 
         L.push('[TITLE]');
@@ -32,38 +49,48 @@ class InpExporter {
 
         L.push('[OPTIONS]');
         L.push(';;Option             Value');
-        L.push(`FLOW_UNITS           ${units}`);
-        L.push(`INFILTRATION         ${opt.infiltration || 'HORTON'}`);
-        L.push(`FLOW_ROUTING         ${opt.flowRouting || 'KINWAVE'}`);
-        L.push('LINK_OFFSETS         DEPTH');
-        L.push('MIN_SLOPE            0');
-        L.push('ALLOW_PONDING        NO');
-        L.push('SKIP_STEADY_STATE    NO');
-        L.push(`START_DATE           ${opt.startDate || '01/01/2026'}`);
-        L.push(`START_TIME           ${opt.startTime || '00:00:00'}`);
-        L.push(`REPORT_START_DATE    ${opt.startDate || '01/01/2026'}`);
-        L.push(`REPORT_START_TIME    ${opt.startTime || '00:00:00'}`);
-        L.push(`END_DATE             ${opt.endDate || '01/01/2026'}`);
-        L.push(`END_TIME             ${opt.endTime || '12:00:00'}`);
-        L.push('SWEEP_START          01/01');
-        L.push('SWEEP_END            12/31');
-        L.push('DRY_DAYS             0');
-        L.push(`REPORT_STEP          ${reportStep}`);
-        L.push(`WET_STEP             ${opt.wetStep || '00:05:00'}`);
-        L.push(`DRY_STEP             ${opt.dryStep || '01:00:00'}`);
-        L.push(`ROUTING_STEP         ${opt.routingStep || '00:00:30'}`);
-        L.push('INERTIAL_DAMPING     PARTIAL');
-        L.push('NORMAL_FLOW_LIMITED  BOTH');
-        L.push('FORCE_MAIN_EQUATION  H-W');
-        L.push('VARIABLE_STEP        0.75');
-        L.push('LENGTHENING_STEP     0');
-        L.push('MIN_SURFAREA         12.557');
-        L.push('MAX_TRIALS           8');
-        L.push('HEAD_TOLERANCE       0.005');
-        L.push('SYS_FLOW_TOL         5');
-        L.push('LAT_FLOW_TOL         5');
-        if (opt.nodeContinuity) L.push(`NODE_CONTINUITY      ${opt.nodeContinuity}`);
-        if (opt.andersonAccel) L.push(`ANDERSON_ACCEL       ${opt.andersonAccel}`);
+        const emitted = new Set();
+        const emitOpt = (key, value) => {
+            emitted.add(key);
+            L.push(`${this.pad(key, 20)} ${value}`);
+        };
+        emitOpt('FLOW_UNITS', units);
+        emitOpt('INFILTRATION', opt.infiltration || rawOr('INFILTRATION', 'HORTON'));
+        emitOpt('FLOW_ROUTING', opt.flowRouting || rawOr('FLOW_ROUTING', 'KINWAVE'));
+        emitOpt('LINK_OFFSETS', rawOr('LINK_OFFSETS', 'DEPTH'));
+        emitOpt('MIN_SLOPE', rawOr('MIN_SLOPE', '0'));
+        emitOpt('ALLOW_PONDING', rawOr('ALLOW_PONDING', 'NO'));
+        emitOpt('SKIP_STEADY_STATE', rawOr('SKIP_STEADY_STATE', 'NO'));
+        emitOpt('START_DATE', opt.startDate || rawOr('START_DATE', '01/01/2026'));
+        emitOpt('START_TIME', opt.startTime || rawOr('START_TIME', '00:00:00'));
+        emitOpt('REPORT_START_DATE', rawOr('REPORT_START_DATE', opt.startDate || '01/01/2026'));
+        emitOpt('REPORT_START_TIME', rawOr('REPORT_START_TIME', opt.startTime || '00:00:00'));
+        emitOpt('END_DATE', opt.endDate || rawOr('END_DATE', '01/01/2026'));
+        emitOpt('END_TIME', opt.endTime || rawOr('END_TIME', '12:00:00'));
+        emitOpt('SWEEP_START', rawOr('SWEEP_START', '01/01'));
+        emitOpt('SWEEP_END', rawOr('SWEEP_END', '12/31'));
+        emitOpt('DRY_DAYS', rawOr('DRY_DAYS', '0'));
+        emitOpt('REPORT_STEP', reportStep);
+        emitOpt('WET_STEP', opt.wetStep || rawOr('WET_STEP', '00:05:00'));
+        emitOpt('DRY_STEP', opt.dryStep || rawOr('DRY_STEP', '01:00:00'));
+        emitOpt('ROUTING_STEP', opt.routingStep || rawOr('ROUTING_STEP', '00:00:30'));
+        emitOpt('INERTIAL_DAMPING', rawOr('INERTIAL_DAMPING', 'PARTIAL'));
+        emitOpt('NORMAL_FLOW_LIMITED', rawOr('NORMAL_FLOW_LIMITED', 'BOTH'));
+        emitOpt('FORCE_MAIN_EQUATION', rawOr('FORCE_MAIN_EQUATION', 'H-W'));
+        emitOpt('VARIABLE_STEP', rawOr('VARIABLE_STEP', '0.75'));
+        emitOpt('LENGTHENING_STEP', rawOr('LENGTHENING_STEP', '0'));
+        emitOpt('MIN_SURFAREA', rawOr('MIN_SURFAREA', '12.557'));
+        emitOpt('MAX_TRIALS', rawOr('MAX_TRIALS', '8'));
+        emitOpt('HEAD_TOLERANCE', rawOr('HEAD_TOLERANCE', '0.005'));
+        emitOpt('SYS_FLOW_TOL', rawOr('SYS_FLOW_TOL', '5'));
+        emitOpt('LAT_FLOW_TOL', rawOr('LAT_FLOW_TOL', '5'));
+        if (opt.nodeContinuity) emitOpt('NODE_CONTINUITY', opt.nodeContinuity);
+        if (opt.andersonAccel) emitOpt('ANDERSON_ACCEL', opt.andersonAccel);
+        // engine options the app has no field for (MINIMUM_STEP, THREADS,
+        // RULE_STEP, SURCHARGE_METHOD, …) pass through unchanged
+        for (const [key, value] of Object.entries(raw)) {
+            if (!emitted.has(key)) emitOpt(key, value);
+        }
         L.push('');
 
         if (!net.rawSections || !net.rawSections['EVAPORATION']) {
@@ -151,10 +178,14 @@ class InpExporter {
 
         if (storages.length) {
             L.push('[STORAGE]');
-            L.push(';;Name           Elev.      MaxDepth   InitDepth  Shape      Curve Params                 Fevap    Psi      Ksat     IMD');
+            L.push(';;Name           Elev.      MaxDepth   InitDepth  Shape      Curve Name/Params            Fevap');
             storages.forEach(n => {
                 const p = n.props;
-                L.push(`${this.pad(n.id, 16)} ${this.pad(p.invertEl, 10)} ${this.pad(p.maxDepth, 10)} ${this.pad(p.initDepth, 10)} ${this.pad(p.shape || 'FUNCTIONAL', 10)} ${this.pad(p.coeff, 8)} ${this.pad(p.exponent, 8)} ${this.pad(p.constant, 8)} 0`);
+                const shape = (p.shape || 'FUNCTIONAL').toUpperCase();
+                const geom = shape === 'TABULAR'
+                    ? this.pad(p.curveName || '*', 26)
+                    : `${this.pad(p.coeff, 8)} ${this.pad(p.exponent, 8)} ${this.pad(p.constant, 8)}`;
+                L.push(`${this.pad(n.id, 16)} ${this.pad(p.invertEl, 10)} ${this.pad(p.maxDepth, 10)} ${this.pad(p.initDepth, 10)} ${this.pad(shape, 10)} ${geom} ${this.pad(p.surDepth ?? 0, 8)} ${p.fevap ?? 0}`);
             });
             L.push('');
         }
@@ -174,6 +205,7 @@ class InpExporter {
         const pumps = net.links.filter(l => l.type === 'PUMP');
         const weirs = net.links.filter(l => l.type === 'WEIR');
         const orifices = net.links.filter(l => l.type === 'ORIFICE');
+        const outlets = net.links.filter(l => l.type === 'OUTLET');
 
         if (conduits.length) {
             L.push('[CONDUITS]');
@@ -197,10 +229,10 @@ class InpExporter {
 
         if (weirs.length) {
             L.push('[WEIRS]');
-            L.push(';;Name           From Node        To Node          Type         CrestHt    Qcoeff     Gated    EndCon   EndCoeff');
+            L.push(';;Name           From Node        To Node          Type         CrestHt    Qcoeff     Gated    EndCon   EndCoeff Surcharge');
             weirs.forEach(l => {
                 const p = l.props;
-                L.push(`${this.pad(l.id, 16)} ${this.pad(l.from, 16)} ${this.pad(l.to, 16)} ${this.pad(p.weirType || 'TRANSVERSE', 12)} ${this.pad(p.crestHt, 10)} ${this.pad(p.qCoeff, 10)} ${this.pad(p.gated || 'NO', 8)} 0        0`);
+                L.push(`${this.pad(l.id, 16)} ${this.pad(l.from, 16)} ${this.pad(l.to, 16)} ${this.pad(p.weirType || 'TRANSVERSE', 12)} ${this.pad(p.crestHt, 10)} ${this.pad(p.qCoeff, 10)} ${this.pad(p.gated || 'NO', 8)} ${this.pad(p.endCon ?? 0, 8)} ${this.pad(p.endCoeff ?? 0, 8)} ${p.surcharge || 'YES'}`);
             });
             L.push('');
         }
@@ -211,6 +243,20 @@ class InpExporter {
             orifices.forEach(l => {
                 const p = l.props;
                 L.push(`${this.pad(l.id, 16)} ${this.pad(l.from, 16)} ${this.pad(l.to, 16)} ${this.pad(p.orificeType || 'SIDE', 12)} ${this.pad(p.offset, 10)} ${this.pad(p.qCoeff, 10)} ${this.pad(p.gated || 'NO', 8)} 0`);
+            });
+            L.push('');
+        }
+
+        if (outlets.length) {
+            L.push('[OUTLETS]');
+            L.push(';;Name           From Node        To Node          Offset     Type             QTable/Qcoeff    Qexpon     Gated');
+            outlets.forEach(l => {
+                const p = l.props;
+                const type = String(p.outletType || 'FUNCTIONAL/DEPTH').toUpperCase();
+                const param = type.startsWith('TABULAR')
+                    ? `${this.pad(p.curveName || '*', 16)} ${this.pad('', 10)}`
+                    : `${this.pad(p.qCoeff ?? 10, 16)} ${this.pad(p.qExpon ?? 0.5, 10)}`;
+                L.push(`${this.pad(l.id, 16)} ${this.pad(l.from, 16)} ${this.pad(l.to, 16)} ${this.pad(p.offset ?? 0, 10)} ${this.pad(type, 16)} ${param} ${p.gated || 'NO'}`);
             });
             L.push('');
         }
@@ -245,7 +291,10 @@ class InpExporter {
         L.push(';;Reporting Options');
         L.push('INPUT      NO');
         L.push('CONTROLS   NO');
-        L.push('SUBCATCHMENTS ALL');
+        // In this engine the selection below also controls the binary .out:
+        // the results viewer reads node/link series only, and subcatchment
+        // series made the .out ~7x larger on city-scale models.
+        L.push('SUBCATCHMENTS NONE');
         L.push('NODES ALL');
         L.push('LINKS ALL');
         
@@ -311,7 +360,7 @@ class InpExporter {
             const handledSections = new Set([
                 'TITLE', 'OPTIONS', 'RAINGAGES', 'SUBCATCHMENTS',
                 'JUNCTIONS', 'OUTFALLS', 'STORAGE',
-                'DIVIDERS', 'CONDUITS', 'PUMPS', 'WEIRS', 'ORIFICES', 'XSECTIONS',
+                'DIVIDERS', 'CONDUITS', 'PUMPS', 'WEIRS', 'ORIFICES', 'OUTLETS', 'XSECTIONS',
                 'COORDINATES', 'VERTICES', 'POLYGONS', 'SYMBOLS', 'REPORT'
             ]);
             for (const [secName, lines] of Object.entries(net.rawSections)) {

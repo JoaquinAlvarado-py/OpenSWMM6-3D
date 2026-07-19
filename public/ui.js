@@ -414,6 +414,7 @@
             { key: 'maxDepth', label: 'Max depth', unit: U('m', 'ft'), type: 'number' },
             { key: 'initDepth', label: 'Init depth', unit: U('m', 'ft'), type: 'number' },
             { key: 'shape', label: 'Shape curve', type: 'select', options: ['FUNCTIONAL', 'TABULAR'] },
+            { key: 'curveName', label: 'Storage curve (tabular)', type: 'text' },
             { key: 'coeff', label: 'Coefficient', type: 'number' },
             { key: 'exponent', label: 'Exponent', type: 'number' },
             { key: 'constant', label: 'Constant', type: 'number' }
@@ -468,6 +469,14 @@
             { key: 'geom1', label: 'Height/diameter', unit: U('m', 'ft'), type: 'number', step: 0.05 },
             { key: 'geom2', label: 'Width', unit: U('m', 'ft'), type: 'number', step: 0.05 }
         ],
+        OUTLET: () => [
+            { key: 'outletType', label: 'Rating type', type: 'select', options: ['FUNCTIONAL/DEPTH', 'FUNCTIONAL/HEAD', 'TABULAR/DEPTH', 'TABULAR/HEAD'] },
+            { key: 'offset', label: 'Inlet offset', unit: U('m', 'ft'), type: 'number' },
+            { key: 'qCoeff', label: 'Flow coeff. (functional)', type: 'number', step: 0.01 },
+            { key: 'qExpon', label: 'Flow exponent (functional)', type: 'number', step: 0.01 },
+            { key: 'curveName', label: 'Rating curve (tabular)', type: 'text' },
+            { key: 'gated', label: 'Flap gate', type: 'select', options: ['NO', 'YES'] }
+        ],
         SUBCATCHMENT: () => [
             { key: 'raingage', label: 'Rain gage', type: 'text' },
             { key: 'outlet', label: 'Outlet node', type: 'text' },
@@ -482,6 +491,7 @@
     const TYPE_LABELS = {
         JUNCTION: 'Junction', OUTFALL: 'Outfall', STORAGE: 'Storage Unit', DIVIDER: 'Flow Divider',
         RAINGAGE: 'Rain Gage', CONDUIT: 'Conduit', PUMP: 'Pump', WEIR: 'Weir', ORIFICE: 'Orifice',
+        OUTLET: 'Outlet',
         SUBCATCHMENT: 'Subcatchment'
     };
 

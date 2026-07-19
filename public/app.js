@@ -63,7 +63,8 @@
         CONDUIT: '#455a64',
         PUMP: '#c62828',
         WEIR: '#ad1457',
-        ORIFICE: '#4527a0'
+        ORIFICE: '#4527a0',
+        OUTLET: '#00695c'
     };
     window.SWMM_COLORS = { NODE_COLORS, LINK_COLORS };
 
@@ -78,6 +79,7 @@
         'PUMP', LINK_COLORS.PUMP,
         'WEIR', LINK_COLORS.WEIR,
         'ORIFICE', LINK_COLORS.ORIFICE,
+        'OUTLET', LINK_COLORS.OUTLET,
         LINK_COLORS.CONDUIT];
 
     const selectedCase = (sel, hov, base) => ['case',
@@ -645,11 +647,25 @@
     };
 
     // ---------- simulation in a Web Worker ----------
+    // One persistent worker: it fetches + compiles the engine binary once
+    // (started at page load, below) and each run only re-instantiates it.
+    let simWorker = null;
+    function getSimWorker() {
+        if (!simWorker) {
+            simWorker = new Worker('simWorker.js');
+            simWorker.onerror = () => {
+                try { simWorker.terminate(); } catch (e) { }
+                simWorker = null;
+            };
+        }
+        return simWorker;
+    }
+
     function runSimulationInWorker(inpText) {
         return new Promise((resolve, reject) => {
             let worker = null;
             try {
-                worker = new Worker('simWorker.js');
+                worker = getSimWorker();
             } catch (e) {
                 reject(e); // caller falls back to main-thread run
                 return;
@@ -659,20 +675,24 @@
                 if (msg.type === 'log') { console.log('SWMM:', msg.text); }
                 else if (msg.type === 'err') { console.warn('SWMM Err:', msg.text); }
                 else if (msg.type === 'done') {
-                    worker.terminate();
                     resolve({ rpt: msg.rpt, outBuffer: msg.outBuffer });
                 } else if (msg.type === 'error') {
-                    worker.terminate();
                     reject(new Error(msg.message));
                 }
             };
             worker.onerror = (e) => {
-                worker.terminate();
+                // the worker itself died (not an engine error inside it) —
+                // discard so the next run starts fresh, fall back for this one
+                try { worker.terminate(); } catch (err) { }
+                if (simWorker === worker) simWorker = null;
                 reject(new Error(e.message || 'Simulation worker failed to start.'));
             };
             worker.postMessage({ type: 'run', inpText });
         });
     }
+
+    // pre-warm: compile the engine while the user is still editing
+    try { getSimWorker(); } catch (e) { }
 
     // Main-thread fallback (previous behavior) for environments without workers
     async function runSimulationOnMainThread(inpText) {

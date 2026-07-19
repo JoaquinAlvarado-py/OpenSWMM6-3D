@@ -45,9 +45,13 @@ class InpParser {
         };
 
         // --- OPTIONS ---
+        // Every option is kept verbatim in options.raw so the exporter can
+        // reproduce settings it has no UI for (ALLOW_PONDING, MAX_TRIALS, …).
+        model.options.raw = {};
         (S['OPTIONS'] || []).forEach(row => {
             const key = (row[0] || '').toUpperCase();
             const val = row.slice(1).join(' ');
+            model.options.raw[key] = val;
             switch (key) {
                 case 'FLOW_UNITS':
                     model.units = ['CFS', 'GPM', 'MGD'].includes(val.toUpperCase()) ? 'US' : 'SI';
@@ -110,12 +114,21 @@ class InpParser {
 
         (S['STORAGE'] || []).forEach(row => {
             if (!coords[row[0]]) return;
+            const shape = (row[4] || 'FUNCTIONAL').toUpperCase();
+            // TABULAR storages carry a geometry curve name where FUNCTIONAL
+            // ones carry coeff/exponent/constant numbers
+            const tabular = shape === 'TABULAR';
             model.nodes.push({
                 id: row[0], type: 'STORAGE', lngLat: coords[row[0]],
                 props: {
                     invertEl: this.num(row[1]), maxDepth: this.num(row[2]), initDepth: this.num(row[3]),
-                    shape: (row[4] || 'FUNCTIONAL').toUpperCase(),
-                    coeff: this.num(row[5], 1000), exponent: this.num(row[6]), constant: this.num(row[7])
+                    shape,
+                    curveName: tabular ? (row[5] || '') : '',
+                    coeff: tabular ? 1000 : this.num(row[5], 1000),
+                    exponent: tabular ? 0 : this.num(row[6]),
+                    constant: tabular ? 0 : this.num(row[7]),
+                    surDepth: tabular ? this.num(row[6]) : this.num(row[8]),
+                    fevap: tabular ? this.num(row[7]) : this.num(row[9])
                 }
             });
         });
@@ -183,6 +196,8 @@ class InpParser {
         (S['WEIRS'] || []).forEach(row => pushLink(row, 'WEIR', {
             weirType: (row[3] || 'TRANSVERSE').toUpperCase(), crestHt: this.num(row[4]),
             qCoeff: this.num(row[5], 3.33), gated: (row[6] || 'NO').toUpperCase(),
+            endCon: this.num(row[7]), endCoeff: this.num(row[8]),
+            surcharge: (row[9] || 'YES').toUpperCase(),
             xShape: 'RECT_OPEN', geom1: 1.0, geom2: 1.0, geom3: 0, geom4: 0
         }));
 
@@ -192,17 +207,38 @@ class InpParser {
             xShape: 'CIRCULAR', geom1: 1.0, geom2: 0, geom3: 0, geom4: 0
         }));
 
+        (S['OUTLETS'] || []).forEach(row => {
+            const outletType = (row[4] || 'FUNCTIONAL/DEPTH').toUpperCase();
+            const tabular = outletType.startsWith('TABULAR');
+            pushLink(row, 'OUTLET', tabular ? {
+                offset: this.num(row[3]), outletType,
+                curveName: row[5] || '', qCoeff: 10, qExpon: 0.5,
+                gated: (row[6] || 'NO').toUpperCase()
+            } : {
+                offset: this.num(row[3]), outletType,
+                curveName: '', qCoeff: this.num(row[5], 10), qExpon: this.num(row[6], 0.5),
+                gated: (row[7] || 'NO').toUpperCase()
+            });
+        });
+
         // --- Cross sections applied onto links ---
+        // Geom columns can be curve names (CUSTOM/IRREGULAR shapes), so
+        // non-numeric tokens are kept verbatim rather than coerced to 0.
+        const geomVal = (v, fallback) => {
+            if (v === undefined || v === '') return fallback;
+            const n = parseFloat(v);
+            return isNaN(n) ? v : n;
+        };
         const linkById = {};
         model.links.forEach(l => linkById[l.id] = l);
         (S['XSECTIONS'] || []).forEach(row => {
             const l = linkById[row[0]];
             if (!l) return;
             l.props.xShape = (row[1] || 'CIRCULAR').toUpperCase();
-            l.props.geom1 = this.num(row[2], 1);
-            l.props.geom2 = this.num(row[3]);
-            l.props.geom3 = this.num(row[4]);
-            l.props.geom4 = this.num(row[5]);
+            l.props.geom1 = geomVal(row[2], 1);
+            l.props.geom2 = geomVal(row[3], 0);
+            l.props.geom3 = geomVal(row[4], 0);
+            l.props.geom4 = geomVal(row[5], 0);
             l.props.barrels = this.num(row[6], 1);
         });
 

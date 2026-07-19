@@ -67,7 +67,7 @@
         if (!lines) return {};
         const out = {};
         for (const line of lines) {
-            const m = line.match(/^\s{0,4}(\S+)\s+(CONDUIT|PUMP|WEIR|ORIFICE|CHANNEL|DUMMY)\s+([\d.eE+-]+)/);
+            const m = line.match(/^\s{0,4}(\S+)\s+(CONDUIT|PUMP|WEIR|ORIFICE|OUTLET|CHANNEL|DUMMY)\s+([\d.eE+-]+)/);
             if (m) out[m[1]] = { type: m[2], maxFlow: parseFloat(m[3]) };
         }
         return out;

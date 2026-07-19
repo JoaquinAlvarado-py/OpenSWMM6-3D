@@ -12,6 +12,8 @@
     <link href="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css" rel="stylesheet" />
     <!-- Local Stylesheet -->
     <link rel="stylesheet" href="styles.css?v=2">
+    <!-- Warm the HTTP cache for the simulation engine binary (fetched by simWorker.js) -->
+    <link rel="preload" href="swmm6wasm.wasm" as="fetch" type="application/wasm" crossorigin="anonymous">
 </head>
 <body>
     <div id="app-grid">
