@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OpenSWMM 6.0.0 3D</title>
+    <title>local swmm6</title>
     <!-- Google Fonts preconnect -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -19,7 +19,7 @@
     <div id="app-grid">
         <!-- TOP TOOLBAR (slim — file operations only) -->
         <header id="toolbar">
-            <div class="tb-brand">OpenSWMM&nbsp;3D</div>
+            <div class="tb-brand">local swmm6</div>
 
             <div class="tb-group">
                 <button id="btn-undo" class="tb-icon-btn" title="Undo (Ctrl+Z)" disabled>
@@ -140,6 +140,14 @@
                         <button class="tb-pill" data-style="blank">Blank</button>
                     </div>
                 </div>
+                <div class="settings-group">
+                    <span class="settings-label">Network Layers</span>
+                    <div class="settings-group-row">
+                        <button id="btn-toggle-nodes" class="tb-pill toggled" title="Toggle Nodes">Nodes</button>
+                        <button id="btn-toggle-links" class="tb-pill toggled" title="Toggle Links">Links</button>
+                        <button id="btn-toggle-subcatchments" class="tb-pill toggled" title="Toggle Subcatchments">Subcatch</button>
+                    </div>
+                </div>
                 <div class="settings-group-row">
                     <button id="btn-toggle-labels" class="tb-pill toggled" title="Toggle map labels">Labels</button>
                     <button id="btn-toggle-3d" class="tb-pill" title="Toggle 3D terrain & buildings">3D View</button>
@@ -243,9 +251,6 @@
                 <span>Links: <b id="sb-links">0</b></span>
                 <span class="sb-sep">·</span>
                 <span id="sb-coords"></span>
-            </div>
-            <div class="sb-right">
-                Ctrl+Z undo · Ctrl+Shift+Z redo · Ctrl+A select all · Del to delete · Esc cancel
             </div>
         </footer>
     </div>

@@ -45,6 +45,9 @@
         map: map,
         currentStyle: 'streets',
         labelsVisible: true,
+        nodesVisible: true,
+        linksVisible: true,
+        subcatchmentsVisible: true,
         is3D: false,
         selection: new Set(),      // selected element ids
         masterPlan: null,          // geojson reference overlay
@@ -383,8 +386,35 @@
                 try { map.setLayoutProperty(l.id, 'visibility', vis); } catch (e) { }
             }
         });
+        applyNodesVisibility();
+        applyLinksVisibility();
     }
     window.applyLabelsVisibility = applyLabelsVisibility;
+
+    // ---------- Network visibility toggles ----------
+    function applyLayerVisibility(layerId, isVisible) {
+        if (!map.getLayer(layerId)) return;
+        try { map.setLayoutProperty(layerId, 'visibility', isVisible ? 'visible' : 'none'); } catch (e) { }
+    }
+
+    function applyNodesVisibility() {
+        applyLayerVisibility('swmm-nodes-layer', window.App.nodesVisible);
+        applyLayerVisibility('swmm-nodes-labels', window.App.nodesVisible && window.App.labelsVisible);
+    }
+    window.applyNodesVisibility = applyNodesVisibility;
+
+    function applyLinksVisibility() {
+        applyLayerVisibility('swmm-links-layer', window.App.linksVisible);
+        applyLayerVisibility('swmm-links-arrows', window.App.linksVisible && window.App.labelsVisible);
+        applyLayerVisibility('swmm-links-hit', window.App.linksVisible);
+    }
+    window.applyLinksVisibility = applyLinksVisibility;
+
+    function applySubcatchmentsVisibility() {
+        applyLayerVisibility('swmm-subcatchments-fill', window.App.subcatchmentsVisible);
+        applyLayerVisibility('swmm-subcatchments-line', window.App.subcatchmentsVisible);
+    }
+    window.applySubcatchmentsVisibility = applySubcatchmentsVisibility;
 
     // ---------- Style switching ----------
     window.setMapStyle = function (styleKey) {
@@ -396,6 +426,9 @@
     map.on('style.load', () => {
         ensureNetworkLayers();
         applyLabelsVisibility();
+        applyNodesVisibility();
+        applyLinksVisibility();
+        applySubcatchmentsVisibility();
         apply3D();
     });
 

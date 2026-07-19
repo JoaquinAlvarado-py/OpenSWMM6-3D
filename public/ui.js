@@ -290,6 +290,27 @@
         });
     });
 
+    const btnNodes = document.getElementById('btn-toggle-nodes');
+    btnNodes.addEventListener('click', () => {
+        App.nodesVisible = !App.nodesVisible;
+        btnNodes.classList.toggle('toggled', App.nodesVisible);
+        if (window.applyNodesVisibility) window.applyNodesVisibility();
+    });
+
+    const btnLinks = document.getElementById('btn-toggle-links');
+    btnLinks.addEventListener('click', () => {
+        App.linksVisible = !App.linksVisible;
+        btnLinks.classList.toggle('toggled', App.linksVisible);
+        if (window.applyLinksVisibility) window.applyLinksVisibility();
+    });
+
+    const btnSubcatchments = document.getElementById('btn-toggle-subcatchments');
+    btnSubcatchments.addEventListener('click', () => {
+        App.subcatchmentsVisible = !App.subcatchmentsVisible;
+        btnSubcatchments.classList.toggle('toggled', App.subcatchmentsVisible);
+        if (window.applySubcatchmentsVisibility) window.applySubcatchmentsVisibility();
+    });
+
     const btnLabels = document.getElementById('btn-toggle-labels');
     btnLabels.addEventListener('click', () => {
         App.labelsVisible = !App.labelsVisible;
